@@ -1,0 +1,4 @@
+kafka:
+  clusters:
+    - name: local
+      bootstrapServers: broker:29092
