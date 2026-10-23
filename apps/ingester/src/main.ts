@@ -3,6 +3,7 @@ import { IngesterModule } from './ingester.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(IngesterModule);
+  app.enableShutdownHooks();
   await app.listen(process.env.port ?? 3000);
 }
 await bootstrap();
