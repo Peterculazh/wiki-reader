@@ -8,6 +8,15 @@
     "tsConfigPath": "apps/ingester/tsconfig.app.json"
   },
   "projects": {
+    "archiver": {
+      "type": "application",
+      "root": "apps/archiver",
+      "entryFile": "main",
+      "sourceRoot": "apps/archiver/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/archiver/tsconfig.app.json"
+      }
+    },
     "ingester": {
       "type": "application",
       "root": "apps/ingester",
