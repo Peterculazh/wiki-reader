@@ -67,4 +67,29 @@ describe('InMemoryKafka helpers', () => {
     expect(kafka.handlerErrors).not.toHaveLength(0);
     expect(kafka.handlerErrors[0]).toMatchObject({ message: 'handler failed' });
   });
+
+  it('rebalance() revokes partitions and redelivers from the committed offset', async () => {
+    const kafka = new InMemoryKafka();
+    await kafka.send('t', [{ value: 'a' }, { value: 'b' }, { value: 'c' }]);
+
+    const seen: string[] = [];
+    const revoked: unknown[] = [];
+    await kafka.subscribeEach(
+      {
+        groupId: 'g',
+        topics: ['t'],
+        fromBeginning: true,
+        onRevoked: (partitions) => revoked.push(partitions),
+      },
+      async (message, context) => {
+        seen.push(message.value!);
+        if (message.value === 'a') await context.commit(message);
+      },
+    );
+    await kafka.drain();
+    await kafka.rebalance();
+
+    expect(revoked).toEqual([[{ topic: 't', partition: 0 }]]);
+    expect(seen).toEqual(['a', 'b', 'c', 'b', 'c']);
+  });
 });

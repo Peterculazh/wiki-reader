@@ -3,7 +3,9 @@ import {
   CompactedTopicReader,
   IncomingMessage,
   MessageConsumerFactory,
+  MessageContext,
   MessageProducer,
+  TopicPartition,
 } from '../ports.js';
 
 export type ContractHarness = {
@@ -122,6 +124,189 @@ export function describeKafkaContract(
       await waitFor(() => expect(after.received).toHaveLength(1));
       await sleep(h.settleMs);
       expect(after.received.map((m) => m.value)).toEqual(['second']);
+    }, 60_000);
+
+    async function collectChunks(
+      groupId: string,
+      chunking: { batchSize?: number; maxWaitMs?: number },
+      failFirst = false,
+    ) {
+      const chunks: string[][] = [];
+      let calls = 0;
+      const subscription = await h.consumers.subscribe(
+        { groupId, topics: [topic], fromBeginning: true, ...chunking },
+        async (chunk) => {
+          if (calls++ === 0 && failFirst) throw new Error('first chunk fails');
+          chunks.push(chunk.map((m) => m.value!));
+        },
+      );
+      stops.push(() => subscription.stop());
+      return { chunks, subscription };
+    }
+
+    const values = (prefix: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ value: `${prefix}${i}` }));
+
+    it('hands the handler exact batchSize chunks and keeps the remainder buffered', async () => {
+      await h.producer.send(topic, values('m', 7));
+
+      const { chunks } = await collectChunks(`${topic}-g`, { batchSize: 3 });
+
+      await waitFor(() => expect(chunks).toHaveLength(2));
+      await sleep(h.settleMs);
+      expect(chunks).toEqual([
+        ['m0', 'm1', 'm2'],
+        ['m3', 'm4', 'm5'],
+      ]);
+    }, 60_000);
+
+    it('flushes a partial chunk once maxWaitMs passes', async () => {
+      await h.producer.send(topic, values('m', 2));
+
+      const { chunks } = await collectChunks(`${topic}-g`, {
+        batchSize: 100,
+        maxWaitMs: 300,
+      });
+
+      await waitFor(() => expect(chunks).toEqual([['m0', 'm1']]));
+    }, 60_000);
+
+    it('redelivers a failed chunk whole, from its first offset', async () => {
+      await h.producer.send(topic, values('m', 4));
+
+      const { chunks } = await collectChunks(
+        `${topic}-g`,
+        { batchSize: 2 },
+        true,
+      );
+
+      await waitFor(async () => {
+        await h.nudge?.();
+        expect(chunks).toEqual([
+          ['m0', 'm1'],
+          ['m2', 'm3'],
+        ]);
+      });
+    }, 60_000);
+
+    it('commits only flushed chunks, so a new member re-reads the buffered remainder', async () => {
+      const groupId = `${topic}-g`;
+      await h.producer.send(topic, values('m', 4));
+
+      const before = await collectChunks(groupId, { batchSize: 3 });
+      await waitFor(() => expect(before.chunks).toHaveLength(1));
+      await sleep(h.settleMs);
+      await before.subscription.stop();
+
+      const after = await collect(groupId);
+      await waitFor(() => expect(after.received).toHaveLength(1));
+      await sleep(h.settleMs);
+      expect(after.received.map((m) => m.value)).toEqual(['m3']);
+    }, 60_000);
+
+    async function collectEach(
+      groupId: string,
+      onMessage?: (
+        message: IncomingMessage,
+        context: MessageContext,
+      ) => Promise<void>,
+      onRevoked?: (partitions: TopicPartition[]) => void,
+    ) {
+      const seen: string[] = [];
+      const subscription = await h.consumers.subscribeEach(
+        { groupId, topics: [topic], fromBeginning: true, onRevoked },
+        async (message, context) => {
+          await onMessage?.(message, context);
+          seen.push(message.value!);
+        },
+      );
+      stops.push(() => subscription.stop());
+      return { seen, subscription };
+    }
+
+    it('subscribeEach delivers every message individually, in order', async () => {
+      await h.producer.send(topic, values('m', 3));
+      const offsets: string[] = [];
+
+      const { seen } = await collectEach(`${topic}-g`, async (message) => {
+        offsets.push(message.offset);
+      });
+
+      await waitFor(() => expect(seen).toEqual(['m0', 'm1', 'm2']));
+      expect(offsets).toEqual(['0', '1', '2']);
+    }, 60_000);
+
+    it('subscribeEach redelivers a message whose handler threw', async () => {
+      await h.producer.send(topic, values('m', 2));
+      let failed = false;
+
+      const { seen } = await collectEach(`${topic}-g`, async (message) => {
+        if (message.value === 'm1' && !failed) {
+          failed = true;
+          throw new Error('m1 fails once');
+        }
+      });
+
+      await waitFor(async () => {
+        await h.nudge?.();
+        expect(seen).toEqual(['m0', 'm1']);
+      });
+    }, 60_000);
+
+    it('subscribeEach commits only what the app commits', async () => {
+      const groupId = `${topic}-g`;
+      await h.producer.send(topic, values('m', 4));
+
+      const before = await collectEach(groupId, async (message, context) => {
+        if (message.value === 'm1') await context.commit(message);
+      });
+      await waitFor(() => expect(before.seen).toHaveLength(4));
+      await sleep(h.settleMs);
+      await before.subscription.stop();
+
+      const after = await collectEach(groupId);
+      await waitFor(() => expect(after.seen).toHaveLength(2));
+      await sleep(h.settleMs);
+      expect(after.seen).toEqual(['m2', 'm3']);
+    }, 60_000);
+
+    it('subscribeEach rewind re-reads the partition from the given offset', async () => {
+      await h.producer.send(topic, values('m', 4));
+      let first: IncomingMessage | undefined;
+      let rewound = false;
+
+      const { seen } = await collectEach(
+        `${topic}-g`,
+        async (message, context) => {
+          first ??= message;
+          // Pretend the buffered m0..m2 failed to store: start over from m0
+          if (message.value === 'm3' && !rewound) {
+            rewound = true;
+            context.rewind(first);
+            throw new Error('stop here, m3 comes again after the rewind');
+          }
+        },
+      );
+
+      await waitFor(async () => {
+        await h.nudge?.();
+        expect(seen).toEqual(['m0', 'm1', 'm2', 'm0', 'm1', 'm2', 'm3']);
+      });
+    }, 60_000);
+
+    it('subscribeEach reports owned partitions as revoked on stop', async () => {
+      await h.producer.send(topic, values('m', 1));
+      const revoked: TopicPartition[][] = [];
+
+      const { seen, subscription } = await collectEach(
+        `${topic}-g`,
+        undefined,
+        (partitions) => revoked.push(partitions),
+      );
+      await waitFor(() => expect(seen).toEqual(['m0']));
+      await subscription.stop();
+
+      expect(revoked).toEqual([[{ topic, partition: 0 }]]);
     }, 60_000);
 
     it('reads the last value per key, honouring tombstones and skipping keyless records', async () => {

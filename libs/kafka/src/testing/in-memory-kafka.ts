@@ -3,19 +3,35 @@ import {
   CompactedTopicReader,
   IncomingMessage,
   MessageConsumerFactory,
+  MessageContext,
+  MessageHandler,
   MessageProducer,
+  MessageSubscription,
   OutgoingMessage,
+  SubscribeEachOptions,
   SubscribeOptions,
   Subscription,
 } from '../ports.js';
+import { PartitionChunker } from '../partition-chunker.js';
+
+type TopicCursor = {
+  /** Next offset to fetch; may run ahead of the committed offset while the app buffers. */
+  position: number;
+  /** Bumped on every rewind, so an in-progress delivery stops at the old position. */
+  generation: number;
+  deliver(batch: IncomingMessage[]): Promise<void>;
+  idle(): Promise<void>;
+  /** Partition taken away: forget buffered state. */
+  revoke(): void;
+};
 
 type ActiveSubscription = {
   groupId: string;
-  topics: string[];
-  handler: BatchHandler;
+  cursors: Map<string, TopicCursor>;
   stopped: boolean;
-  // Serializes deliveries so a subscription sees one batch at a time
+  // Serializes fetches so a subscription sees one batch at a time
   chain: Promise<void>;
+  onRevoked?: SubscribeEachOptions['onRevoked'];
 };
 
 /**
@@ -23,8 +39,10 @@ type ActiveSubscription = {
  *
  * Delivery to subscribers is asynchronous like the real client: `send` resolves
  * once the message is stored, and `drain()` waits until every subscriber has
- * caught up. A throwing handler leaves its batch uncommitted; it is retried on
- * the next `send` or `drain`, and the last error is kept in `handlerErrors`.
+ * caught up. Chunking (`batchSize` / `maxWaitMs`) uses the same PartitionChunker
+ * as the real consumer. A throwing handler leaves its chunk or message
+ * uncommitted; it is retried on the next `send` or `drain`, and the error is
+ * kept in `handlerErrors`.
  */
 export class InMemoryKafka
   implements MessageProducer, MessageConsumerFactory, CompactedTopicReader
@@ -60,33 +78,84 @@ export class InMemoryKafka
   // --- MessageConsumerFactory ---
 
   async subscribe(
-    { groupId, topics, fromBeginning = false }: SubscribeOptions,
-    handler: BatchHandler,
-  ): Promise<Subscription> {
-    const offsets = this.groupOffsets(groupId);
-    for (const topic of topics) {
-      if (!offsets.has(topic)) {
-        offsets.set(topic, fromBeginning ? 0 : this.topicLog(topic).length);
-      }
-    }
-
-    const subscription: ActiveSubscription = {
+    {
       groupId,
       topics,
-      handler,
-      stopped: false,
-      chain: Promise.resolve(),
-    };
-    this.subscriptions.add(subscription);
-    this.pump(subscription);
+      fromBeginning = false,
+      batchSize,
+      maxWaitMs,
+    }: SubscribeOptions,
+    handler: BatchHandler,
+  ): Promise<Subscription> {
+    const committed = this.groupOffsets(groupId, topics, fromBeginning);
 
-    return {
-      stop: async () => {
-        subscription.stopped = true;
-        this.subscriptions.delete(subscription);
-        await subscription.chain;
+    const subscription = this.register(groupId, topics, (topic) => {
+      const newChunker = () =>
+        new PartitionChunker(
+          { batchSize, maxWaitMs },
+          {
+            flush: async (chunk) => {
+              await handler(chunk);
+              committed.set(topic, Number(chunk[chunk.length - 1].offset) + 1);
+            },
+            rewind: (offset) => this.rewind(subscription, topic, offset),
+            onError: (err) => this.handlerErrors.push(err),
+          },
+        );
+      let chunker = newChunker();
+      return {
+        deliver: (batch) => chunker.push(batch),
+        idle: () => chunker.idle(),
+        revoke: () => {
+          chunker.drop();
+          chunker = newChunker();
+        },
+      };
+    });
+
+    return { stop: () => this.stop(subscription) };
+  }
+
+  async subscribeEach(
+    { groupId, topics, fromBeginning = false, onRevoked }: SubscribeEachOptions,
+    handler: MessageHandler,
+  ): Promise<MessageSubscription> {
+    const committed = this.groupOffsets(groupId, topics, fromBeginning);
+
+    const context: MessageContext = {
+      commit: async ({ topic, offset }) => {
+        if (!subscription.stopped) committed.set(topic, Number(offset) + 1);
+      },
+      rewind: ({ topic, offset }) => {
+        this.rewind(subscription, topic, offset);
+        // The real client re-fetches by itself after a seek
+        this.pump(subscription);
       },
     };
+
+    const subscription = this.register(groupId, topics, (topic) => ({
+      deliver: async (batch) => {
+        const cursor = subscription.cursors.get(topic)!;
+        const generation = cursor.generation;
+        for (const message of batch) {
+          if (subscription.stopped || cursor.generation !== generation) return;
+          try {
+            await handler(message, context);
+          } catch (err) {
+            this.handlerErrors.push(err);
+            if (cursor.generation === generation) {
+              this.rewind(subscription, topic, message.offset);
+            }
+            return;
+          }
+        }
+      },
+      idle: async () => {},
+      revoke: () => {},
+    }));
+    subscription.onRevoked = onRevoked;
+
+    return { stop: () => this.stop(subscription), ...context };
   }
 
   // --- CompactedTopicReader ---
@@ -113,10 +182,86 @@ export class InMemoryKafka
     this.sendFailures.push(error);
   }
 
-  /** Waits until every active subscription has processed all stored messages (or failed). */
+  /**
+   * Waits until every active subscription has fetched all stored messages and
+   * flushed every full chunk (or failed). Partial chunks stay buffered until
+   * their `maxWaitMs` timer fires.
+   */
   async drain(): Promise<void> {
     this.pumpAll();
-    await Promise.all([...this.subscriptions].map((s) => s.chain));
+    await Promise.all(
+      [...this.subscriptions].map(async (s) => {
+        await s.chain;
+        await Promise.all([...s.cursors.values()].map((c) => c.idle()));
+      }),
+    );
+  }
+
+  /**
+   * Simulates a rebalance that takes every partition away and hands it straight
+   * back: buffers are dropped, `onRevoked` fires, and delivery resumes from the
+   * committed offsets.
+   */
+  async rebalance(): Promise<void> {
+    for (const subscription of this.subscriptions) this.revokeAll(subscription);
+    await this.drain();
+  }
+
+  private register(
+    groupId: string,
+    topics: string[],
+    makeCursor: (topic: string) => Omit<TopicCursor, 'position' | 'generation'>,
+  ): ActiveSubscription {
+    const committed = this.committed.get(groupId)!;
+    const subscription: ActiveSubscription = {
+      groupId,
+      cursors: new Map(),
+      stopped: false,
+      chain: Promise.resolve(),
+    };
+    for (const topic of topics) {
+      subscription.cursors.set(topic, {
+        position: committed.get(topic)!,
+        generation: 0,
+        ...makeCursor(topic),
+      });
+    }
+    this.subscriptions.add(subscription);
+    this.pump(subscription);
+    return subscription;
+  }
+
+  private async stop(subscription: ActiveSubscription) {
+    if (subscription.stopped) return;
+    this.revokeAll(subscription);
+    subscription.stopped = true;
+    this.subscriptions.delete(subscription);
+    await subscription.chain;
+  }
+
+  private revokeAll(subscription: ActiveSubscription) {
+    const committed = this.committed.get(subscription.groupId)!;
+    for (const [topic, cursor] of subscription.cursors) {
+      cursor.revoke();
+      this.rewind(subscription, topic, String(committed.get(topic) ?? 0));
+    }
+    subscription.onRevoked?.(
+      [...subscription.cursors.keys()].map((topic) => ({
+        topic,
+        partition: 0,
+      })),
+    );
+  }
+
+  private rewind(
+    subscription: ActiveSubscription,
+    topic: string,
+    offset: string,
+  ) {
+    const cursor = subscription.cursors.get(topic);
+    if (!cursor) return;
+    cursor.position = Number(offset);
+    cursor.generation++;
   }
 
   private pumpAll() {
@@ -130,21 +275,14 @@ export class InMemoryKafka
   }
 
   private async deliver(subscription: ActiveSubscription) {
-    const offsets = this.groupOffsets(subscription.groupId);
-    for (const topic of subscription.topics) {
+    for (const [topic, cursor] of subscription.cursors) {
       if (subscription.stopped) return;
 
-      const next = offsets.get(topic) ?? 0;
-      const batch = this.topicLog(topic).slice(next);
+      const batch = this.topicLog(topic).slice(cursor.position);
       if (batch.length === 0) continue;
 
-      try {
-        await subscription.handler(batch);
-        offsets.set(topic, next + batch.length);
-      } catch (err) {
-        this.handlerErrors.push(err);
-        return;
-      }
+      cursor.position += batch.length;
+      await cursor.deliver(batch);
     }
   }
 
@@ -157,11 +295,21 @@ export class InMemoryKafka
     return entries;
   }
 
-  private groupOffsets(groupId: string): Map<string, number> {
+  /** Committed offsets of `groupId`, starting new topics like a fresh group would. */
+  private groupOffsets(
+    groupId: string,
+    topics: string[],
+    fromBeginning: boolean,
+  ): Map<string, number> {
     let offsets = this.committed.get(groupId);
     if (!offsets) {
       offsets = new Map();
       this.committed.set(groupId, offsets);
+    }
+    for (const topic of topics) {
+      if (!offsets.has(topic)) {
+        offsets.set(topic, fromBeginning ? 0 : this.topicLog(topic).length);
+      }
     }
     return offsets;
   }

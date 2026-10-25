@@ -22,8 +22,9 @@ export abstract class MessageProducer {
 }
 
 /**
- * Receives one batch from a single topic-partition, in offset order.
- * Resolving commits the batch; throwing leaves it uncommitted so it is redelivered.
+ * Receives one chunk from a single topic-partition, in offset order.
+ * Resolving commits the chunk; throwing leaves it uncommitted and the partition
+ * is rewound to the chunk start, so the same messages are redelivered.
  */
 export type BatchHandler = (messages: IncomingMessage[]) => Promise<void>;
 
@@ -32,17 +33,76 @@ export type SubscribeOptions = {
   topics: string[];
   /** Where a group with no committed offsets starts. Defaults to false (live only). */
   fromBeginning?: boolean;
+  /**
+   * Buffer each partition in memory and call the handler with exactly this many
+   * messages. Unset: the handler gets whatever the client fetched.
+   */
+  batchSize?: number;
+  /**
+   * With `batchSize`: flush a partial chunk this long after its first message
+   * arrived, so a quiet partition still gets committed.
+   */
+  maxWaitMs?: number;
 };
 
+/** Handle for one consumer-group member. Stopping drops uncommitted buffers and leaves the group. */
 export type Subscription = {
   stop(): Promise<void>;
 };
 
+export type TopicPartition = { topic: string; partition: number };
+export type MessagePosition = Pick<
+  IncomingMessage,
+  'topic' | 'partition' | 'offset'
+>;
+
+/** Offset control for `subscribeEach`, where the app decides what is committed. */
+export type MessageContext = {
+  /** Commits everything up to and including `message` on its partition. */
+  commit(message: MessagePosition): Promise<void>;
+  /**
+   * Re-reads `message`'s partition starting at `message.offset`, e.g. after a
+   * failed write of a buffer that started there. Messages already fetched past
+   * it are not delivered again until the rewound ones are.
+   */
+  rewind(message: MessagePosition): void;
+};
+
+/**
+ * Receives every message, one at a time and in offset order per partition.
+ * Nothing is committed automatically. Throwing redelivers this same message.
+ */
+export type MessageHandler = (
+  message: IncomingMessage,
+  context: MessageContext,
+) => Promise<void>;
+
+export type SubscribeEachOptions = Omit<
+  SubscribeOptions,
+  'batchSize' | 'maxWaitMs'
+> & {
+  /**
+   * Partitions this member no longer owns: Kafka moved them elsewhere, or the
+   * subscription is stopping. Drop their buffers; the uncommitted messages are
+   * read again by whoever owns the partition next.
+   */
+  onRevoked?(partitions: TopicPartition[]): void;
+};
+
+export type MessageSubscription = Subscription & MessageContext;
+
 export abstract class MessageConsumerFactory {
+  /** Chunked delivery: the library buffers and commits after each resolved chunk. */
   abstract subscribe(
     options: SubscribeOptions,
     handler: BatchHandler,
   ): Promise<Subscription>;
+
+  /** Per-message delivery: the app buffers and commits with `context.commit`. */
+  abstract subscribeEach(
+    options: SubscribeEachOptions,
+    handler: MessageHandler,
+  ): Promise<MessageSubscription>;
 }
 
 export abstract class CompactedTopicReader {
