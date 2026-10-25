@@ -25,6 +25,9 @@
       "@app/kafka": [
         "./libs/kafka/src/index.ts"
       ],
+      "@app/kafka/testing": [
+        "./libs/kafka/src/testing/index.ts"
+      ],
       "@app/kafka/*": [
         "./libs/kafka/src/*"
       ]
@@ -37,6 +40,9 @@
     },
     {
       "path": "./apps/archiver/tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.spec.json"
     }
   ]
 }

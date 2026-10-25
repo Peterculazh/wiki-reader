@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "apps/**/*.spec.ts",
+    "apps/**/*.e2e-spec.ts",
+    "libs/**/*.spec.ts",
+    "libs/**/*.e2e-spec.ts"
+  ]
+}

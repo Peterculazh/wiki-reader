@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { EventSource } from 'eventsource';
-import { KafkaJS } from '@confluentinc/kafka-javascript';
+import { CompactedTopicReader, MessageProducer } from '@app/kafka';
 
 type RecentChangeEvent = {
   $schema: string;
@@ -67,18 +67,13 @@ type RecentChangeEvent = {
 @Injectable()
 export class IngesterService implements OnModuleInit, OnModuleDestroy {
   private eventsource: EventSource;
-  private kafka: KafkaJS.Kafka;
-  private kafkaProducer: KafkaJS.Producer;
+
+  constructor(
+    private readonly producer: MessageProducer,
+    private readonly compactedReader: CompactedTopicReader,
+  ) {}
 
   async onModuleInit() {
-    this.kafka = new KafkaJS.Kafka({
-      kafkaJS: {
-        brokers: ['localhost:9092'], // Replace with your Kafka broker addresses
-      },
-    });
-    this.kafkaProducer = this.kafka.producer();
-    await this.kafkaProducer.connect();
-
     const resumeId = await this.readLatestEventId();
     console.log(
       resumeId
@@ -118,10 +113,7 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
     let lastStoredEventTimestamp = 0;
     this.eventsource.onmessage = async (event) => {
       try {
-        await this.kafkaProducer.send({
-          topic: 'wiki.changes',
-          messages: [{ value: event.data, }],
-        });
+        await this.producer.send('wiki.changes', [{ value: event.data }]);
 
         const now = Date.now();
 
@@ -129,11 +121,10 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
           lastStoredEventTimestamp = now;
           try {
             const id = event.lastEventId;
-            await this.kafkaProducer.send({
-              topic: 'wiki.changes.latest',
-              // Compacted topic: broker rejects keyless records
-              messages: [{ key: 'latest', value: JSON.stringify({ latestId: id }) }],
-            });
+            // Compacted topic: broker rejects keyless records
+            await this.producer.send('wiki.changes.latest', [
+              { key: 'latest', value: JSON.stringify({ latestId: id }) },
+            ]);
           } catch (err) {
             console.error('Failed to send latest event ID to Kafka:', err);
             lastStoredEventTimestamp = 0; // allow a retry on the next event
@@ -151,80 +142,18 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
    */
   private async readLatestEventId(): Promise<string | null> {
     const topic = 'wiki.changes.latest';
-
-    const admin = this.kafka.admin();
-    let partitions: { partition: number; high: string; low: string }[];
     try {
-      await admin.connect();
-      partitions = await admin.fetchTopicOffsets(topic);
-    } catch (err) {
-      console.error(`Failed to fetch offsets for ${topic}:`, err);
-      return null;
-    } finally {
-      await admin.disconnect();
-    }
-
-    // Last offset to wait for on each partition that has data
-    const pending = new Map<number, number>();
-    for (const { partition, high, low } of partitions) {
-      if (Number(high) > Number(low)) pending.set(partition, Number(high) - 1);
-    }
-    if (pending.size === 0) return null;
-
-    // Throwaway group: no committed offsets, always reads the whole (small) compacted topic
-    const consumer = this.kafka.consumer({
-      kafkaJS: {
-        groupId: `ingester-latest-reader-${Date.now()}`,
-        fromBeginning: true,
-        autoCommit: false,
-      },
-    });
-
-    let latestId: string | null = null;
-    let timeout: NodeJS.Timeout | undefined;
-    try {
-      await consumer.connect();
-      await consumer.subscribe({ topics: [topic] });
-
-      await new Promise<void>((resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error(`Timed out reading ${topic}`)),
-          10_000,
-        );
-
-        consumer
-          .run({
-            eachMessage: async ({ partition, message }) => {
-              if (message.key?.toString() === 'latest' && message.value) {
-                const parsed = JSON.parse(message.value.toString()) as {
-                  latestId?: string;
-                };
-                if (parsed.latestId) latestId = parsed.latestId;
-              }
-
-              const last = pending.get(partition);
-              if (last !== undefined && Number(message.offset) >= last) {
-                pending.delete(partition);
-                if (pending.size === 0) resolve();
-              }
-            },
-          })
-          .catch(reject);
-      });
+      const stored = (await this.compactedReader.readAll(topic)).get('latest');
+      if (!stored) return null;
+      return (JSON.parse(stored) as { latestId?: string }).latestId ?? null;
     } catch (err) {
       console.error(`Failed to read latest event ID from ${topic}:`, err);
       return null;
-    } finally {
-      clearTimeout(timeout);
-      await consumer.disconnect();
     }
-
-    return latestId;
   }
 
   async onModuleDestroy() {
-    // Stop the stream first so no new sends hit a disconnecting producer
+    // The producer disconnects later, in KafkaModule's shutdown hook
     this.eventsource.close();
-    await this.kafkaProducer.disconnect();
   }
 }
