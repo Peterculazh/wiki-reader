@@ -30,6 +30,15 @@
       ],
       "@app/kafka/*": [
         "./libs/kafka/src/*"
+      ],
+      "@app/storage": [
+        "./libs/storage/src/index.ts"
+      ],
+      "@app/storage/testing": [
+        "./libs/storage/src/testing/index.ts"
+      ],
+      "@app/storage/*": [
+        "./libs/storage/src/*"
       ]
     }
   },

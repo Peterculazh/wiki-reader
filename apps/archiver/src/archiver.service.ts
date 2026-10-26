@@ -1,14 +1,28 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import {
   IncomingMessage,
   MessageConsumerFactory,
   Subscription,
 } from '@app/kafka';
+import { ObjectStorage } from '@app/storage';
+
+const CHUNK_SIZE = 300;
+
+// Zero-padded so keys sort by offset: <topic>/partition=<p>/<first>-<last>.jsonl.
+// A chunk always starts at a committed offset, so a retry overwrites the same key.
+export function chunkKey(chunk: IncomingMessage[]): string {
+  const first = chunk[0];
+  const pad = (offset: string) => offset.padStart(20, '0');
+  return `${first.topic}/partition=${first.partition}/${pad(first.offset)}-${pad(chunk.at(-1)!.offset)}.jsonl`;
+}
 
 @Injectable()
-export class ArchiverService implements OnModuleInit {
+export class ArchiverService implements OnModuleInit, OnModuleDestroy {
   private subscription: Subscription;
-  constructor(private readonly consumers: MessageConsumerFactory) {}
+  constructor(
+    private readonly consumers: MessageConsumerFactory,
+    private readonly storage: ObjectStorage,
+  ) {}
 
   async onModuleInit() {
     const buffers = new Map<number, IncomingMessage[]>(); // one buffer per partition
@@ -27,11 +41,15 @@ export class ArchiverService implements OnModuleInit {
         const buffer = buffers.get(message.partition) ?? [];
         buffers.set(message.partition, buffer);
         buffer.push(message);
-        if (buffer.length < 300) return;
+        if (buffer.length < CHUNK_SIZE) return;
 
         buffers.delete(message.partition);
         try {
-          await this.s3.put(buffer);
+          await this.storage.put(
+            chunkKey(buffer),
+            buffer.map((m) => m.value ?? 'null').join('\n') + '\n',
+            { contentType: 'application/x-ndjson' },
+          );
         } catch {
           rewind(buffer[0]); // S3 failed: re-read this partition from the buffer's first message
           return;
@@ -39,5 +57,9 @@ export class ArchiverService implements OnModuleInit {
         await commit(message); // commits everything up to and including this message
       },
     );
+  }
+
+  async onModuleDestroy() {
+    await this.subscription?.stop();
   }
 }
