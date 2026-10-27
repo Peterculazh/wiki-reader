@@ -22,6 +22,9 @@ export function createS3Client(options: StorageModuleOptions): S3Client {
     credentials: options.credentials,
     // S3-compatible servers serve buckets under the path, not a subdomain
     forcePathStyle: custom,
+    // The SDK has no timeout by default: a hung request would block the caller
+    // (e.g. a Kafka consumer past its poll interval) instead of failing and retrying
+    requestHandler: { connectionTimeout: 5_000, requestTimeout: 30_000 },
     // The SDK's default CRC checksums aren't understood by every S3-compatible server
     ...(custom && {
       requestChecksumCalculation: 'WHEN_REQUIRED',

@@ -1,114 +1,103 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# wiki-reader
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A small pipeline that reads Wikipedia's live edit stream and archives it to S3-compatible storage, using Kafka in between.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
-
-## Description
-
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
-
-## Project setup
-
-```bash
-$ npm install
+```
+Wikimedia EventStreams ──► ingester ──► Kafka: wiki.changes ──► archiver ──► S3 (wiki-archive)
+                              │
+                              └──► Kafka: wiki.changes.latest (compacted, resume position)
 ```
 
-## Compile and run the project
+## Apps and libraries
+
+NestJS monorepo ([nest-cli.json](nest-cli.json)):
+
+| Path | What it does |
+|---|---|
+| [apps/ingester](apps/ingester) | Reads the [recentchange](https://stream.wikimedia.org/v2/stream/recentchange) server-sent events (SSE) stream and publishes every event to `wiki.changes`. About once a minute it saves the last event ID to the compacted topic `wiki.changes.latest`, so after a restart it resumes where it left off. |
+| [apps/archiver](apps/archiver) | Consumes `wiki.changes` and writes each partition's messages to S3 as gzipped NDJSON chunks. |
+| [libs/kafka](libs/kafka) | Kafka ports (`MessageProducer`, `MessageConsumerFactory`, `CompactedTopicReader`), a Confluent client implementation and an in-memory fake for tests. |
+| [libs/storage](libs/storage) | `ObjectStorage` port, an S3 implementation (AWS SDK v3) and an in-memory fake for tests. |
+
+### How the archiver writes chunks
+
+- Messages are buffered per partition. A chunk is written when it reaches **300 messages**, or **60 s after its first message**, whichever comes first.
+- Object key: `wiki.changes/partition=<p>/<first offset, zero-padded to 20>.jsonl.gz`, gzipped (about 7x smaller), one Kafka message per line. It is a plain `.gz` file with no `Content-Encoding`, so any tool that reads `.jsonl.gz` can open it directly.
+- An offset is committed only after its chunk is stored. If a write fails, the archiver reads the partition again from the chunk's first offset and retries.
+- A retry starts at the same offset, so it overwrites the same key. Delivery is at-least-once, and a retry leaves no duplicate objects behind.
+
+## Prerequisites
+
+- Node.js and npm
+- Docker with Compose
+
+## Getting started
 
 ```bash
-# development
-$ npm run start
+npm install
 
-# watch mode
-$ npm run start:dev
+# Kafka, Kafka UI, Postgres, SeaweedFS (S3), SeaweedFS admin UI
+docker compose up -d
 
-# production mode
-$ npm run start:prod
+# In two terminals
+npm run start:dev -- ingester
+npm run start:dev -- archiver
 ```
 
-## Run tests
+Both apps listen on port `3000` by default. Set `port` for one of them to run both at once, for example `port=3001 npm run start:dev -- archiver`. In PowerShell: `$env:port=3001; npm run start:dev -- archiver`.
+
+## Configuration
+
+Every setting has a local default that matches [docker-compose.yml](docker-compose.yml), so local runs need no configuration. Override them through environment variables:
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `KAFKA_BROKERS` | ingester, archiver | Comma-separated broker list |
+| `S3_ENDPOINT` | archiver | S3-compatible endpoint. Leave it unset to use AWS. |
+| `S3_REGION` | archiver | Bucket region |
+| `S3_BUCKET` | archiver | Target bucket |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | archiver | S3 credentials. The local SeaweedFS identity is defined in [seaweedfs/s3.json](seaweedfs/s3.json). |
+| `S3_CREATE_BUCKET` | archiver | Set to `false` to skip creating the bucket on startup (meant for local dev only) |
+| `port` | ingester, archiver | HTTP port |
+
+Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_ADMIN_PORT`, `POSTGRES_PORT`.
+
+## Local services
+
+| Service | URL | Use it to |
+|---|---|---|
+| Kafka | `localhost:9092` | Connect the apps from the host |
+| Kafka UI (kafbat) | http://localhost:8080 | Browse topics and messages, and watch consumer-group lag |
+| SeaweedFS S3 | http://localhost:8333 | S3 API endpoint |
+| SeaweedFS filer | http://localhost:8888/buckets/wiki-archive/ | Browse archived objects in the browser |
+| SeaweedFS admin | http://localhost:23646 | Manage buckets and S3 users, and see cluster status ([docker-compose.override.yml](docker-compose.override.yml)) |
+
+### Inspecting the archive
+
+Point any S3 client at the SeaweedFS endpoint, using the identity from [seaweedfs/s3.json](seaweedfs/s3.json). With the AWS CLI:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+aws --endpoint-url http://localhost:8333 s3 ls s3://wiki-archive --recursive
+aws --endpoint-url http://localhost:8333 s3 cp s3://wiki-archive/wiki.changes/partition=0/00000000000000000000.jsonl.gz - | gunzip
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Or use SeaweedFS's own shell:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker exec -it seaweedfs weed shell
+> fs.ls -l /buckets/wiki-archive/wiki.changes/partition=0/
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### Trying a storage outage
 
-## Observability
+With the archiver running, run `docker stop seaweedfs`. The archiver logs failed chunks and commits nothing, and the `archiver` group's lag grows in Kafka UI. Then run `docker start seaweedfs`: the lag drains and the chunks land under the same keys.
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+## Tests
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+```bash
+npm test             # unit tests (Vitest), in-memory Kafka and storage fakes, no Docker needed
+npm run test:e2e     # real Kafka and SeaweedFS, run `docker compose up -d` first
+npm run test:cov     # coverage
+```
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+The fakes and the real implementations run the same contract suites, [kafka.contract.ts](libs/kafka/src/testing/kafka.contract.ts) and [storage.contract.ts](libs/storage/src/testing/storage.contract.ts): the fakes in unit tests, the real ones in e2e. So the fakes the apps' tests use behave like real Kafka and S3.
