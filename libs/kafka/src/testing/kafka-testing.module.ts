@@ -3,6 +3,7 @@ import {
   CompactedTopicReader,
   MessageConsumerFactory,
   MessageProducer,
+  TopicAdmin,
 } from '../ports.js';
 import { InMemoryKafka } from './in-memory-kafka.js';
 
@@ -21,12 +22,14 @@ export class KafkaTestingModule {
         { provide: MessageProducer, useValue: kafka },
         { provide: MessageConsumerFactory, useValue: kafka },
         { provide: CompactedTopicReader, useValue: kafka },
+        { provide: TopicAdmin, useValue: kafka },
       ],
       exports: [
         InMemoryKafka,
         MessageProducer,
         MessageConsumerFactory,
         CompactedTopicReader,
+        TopicAdmin,
       ],
     };
   }

@@ -51,6 +51,9 @@
       "path": "./apps/archiver/tsconfig.app.json"
     },
     {
+      "path": "./apps/bursts/tsconfig.app.json"
+    },
+    {
       "path": "./tsconfig.spec.json"
     }
   ]

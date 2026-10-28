@@ -70,7 +70,8 @@ export type MessageContext = {
 
 /**
  * Receives every message, one at a time and in offset order per partition.
- * Nothing is committed automatically. Throwing redelivers this same message.
+ * Nothing is committed automatically unless `autoCommit` is set. Throwing
+ * redelivers this same message.
  */
 export type MessageHandler = (
   message: IncomingMessage,
@@ -87,6 +88,12 @@ export type SubscribeEachOptions = Omit<
    * read again by whoever owns the partition next.
    */
   onRevoked?(partitions: TopicPartition[]): void;
+  /**
+   * Let the client commit each message once the handler resolved, in the
+   * background. For apps whose state lives in memory anyway, so committing
+   * only after an explicit write would protect nothing. Defaults to false.
+   */
+  autoCommit?: boolean;
 };
 
 export type MessageSubscription = Subscription & MessageContext;
@@ -103,6 +110,17 @@ export abstract class MessageConsumerFactory {
     options: SubscribeEachOptions,
     handler: MessageHandler,
   ): Promise<MessageSubscription>;
+}
+
+export abstract class TopicAdmin {
+  /**
+   * Creates `topic` if it doesn't exist yet. An existing topic is left as is,
+   * even if its partition count differs, so calling this on every start is safe.
+   */
+  abstract ensureTopic(
+    topic: string,
+    options: { numPartitions: number },
+  ): Promise<void>;
 }
 
 export abstract class CompactedTopicReader {

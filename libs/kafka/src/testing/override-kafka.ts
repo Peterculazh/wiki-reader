@@ -3,6 +3,7 @@ import {
   CompactedTopicReader,
   MessageConsumerFactory,
   MessageProducer,
+  TopicAdmin,
 } from '../ports.js';
 import { InMemoryKafka } from './in-memory-kafka.js';
 
@@ -24,5 +25,7 @@ export function overrideKafka(
     .overrideProvider(MessageConsumerFactory)
     .useValue(kafka)
     .overrideProvider(CompactedTopicReader)
+    .useValue(kafka)
+    .overrideProvider(TopicAdmin)
     .useValue(kafka);
 }

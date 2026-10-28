@@ -5,6 +5,7 @@ import {
   MessageConsumerFactory,
   MessageContext,
   MessageProducer,
+  TopicAdmin,
   TopicPartition,
 } from '../ports.js';
 
@@ -12,6 +13,8 @@ export type ContractHarness = {
   producer: MessageProducer;
   consumers: MessageConsumerFactory;
   reader: CompactedTopicReader;
+  /** Topics it creates must be cleaned up by `close`. */
+  admin: TopicAdmin;
   /** Creates a single-partition topic, so ordering assertions hold. */
   createTopic(name: string): Promise<void>;
   /** How long to wait for asynchronous delivery. */
@@ -307,6 +310,47 @@ export function describeKafkaContract(
       await subscription.stop();
 
       expect(revoked).toEqual([[{ topic, partition: 0 }]]);
+    }, 60_000);
+
+    it('subscribeEach with autoCommit commits every handled message', async () => {
+      const groupId = `${topic}-g`;
+      await h.producer.send(topic, values('m', 2));
+
+      const seen: string[] = [];
+      const before = await h.consumers.subscribeEach(
+        { groupId, topics: [topic], fromBeginning: true, autoCommit: true },
+        async (message) => {
+          seen.push(message.value!);
+        },
+      );
+      stops.push(() => before.stop());
+      await waitFor(() => expect(seen).toEqual(['m0', 'm1']));
+      await sleep(h.settleMs);
+      await before.stop();
+
+      await h.producer.send(topic, [{ value: 'm2' }]);
+      const after = await collectEach(groupId);
+      await waitFor(() => expect(after.seen).toHaveLength(1));
+      await sleep(h.settleMs);
+      expect(after.seen).toEqual(['m2']);
+    }, 60_000);
+
+    it('ensureTopic creates a usable topic and can be called again', async () => {
+      const ensured = `${topic}-ensured`;
+
+      await h.admin.ensureTopic(ensured, { numPartitions: 1 });
+      await h.admin.ensureTopic(ensured, { numPartitions: 1 });
+
+      await h.producer.send(ensured, [{ value: 'hello' }]);
+      const received: string[] = [];
+      const subscription = await h.consumers.subscribeEach(
+        { groupId: `${ensured}-g`, topics: [ensured], fromBeginning: true },
+        async (message) => {
+          received.push(message.value!);
+        },
+      );
+      stops.push(() => subscription.stop());
+      await waitFor(() => expect(received).toEqual(['hello']));
     }, 60_000);
 
     it('reads the last value per key, honouring tombstones and skipping keyless records', async () => {

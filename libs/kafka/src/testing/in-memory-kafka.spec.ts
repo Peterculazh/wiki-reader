@@ -7,6 +7,7 @@ describeKafkaContract('InMemoryKafka', async () => {
     producer: kafka,
     consumers: kafka,
     reader: kafka,
+    admin: kafka,
     createTopic: async () => {},
     timeoutMs: 1_000,
     settleMs: 0,

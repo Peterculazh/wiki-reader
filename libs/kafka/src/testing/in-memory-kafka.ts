@@ -11,6 +11,7 @@ import {
   SubscribeEachOptions,
   SubscribeOptions,
   Subscription,
+  TopicAdmin,
 } from '../ports.js';
 import { PartitionChunker } from '../partition-chunker.js';
 
@@ -45,13 +46,19 @@ type ActiveSubscription = {
  * kept in `handlerErrors`.
  */
 export class InMemoryKafka
-  implements MessageProducer, MessageConsumerFactory, CompactedTopicReader
+  implements
+    MessageProducer,
+    MessageConsumerFactory,
+    CompactedTopicReader,
+    TopicAdmin
 {
   private readonly log = new Map<string, IncomingMessage[]>();
   /** groupId -> topic -> next offset to deliver */
   private readonly committed = new Map<string, Map<string, number>>();
   private readonly subscriptions = new Set<ActiveSubscription>();
   private readonly sendFailures: Error[] = [];
+  /** topic -> requested partition count; delivery still uses partition 0 only */
+  private readonly ensured = new Map<string, number>();
 
   readonly handlerErrors: unknown[] = [];
 
@@ -117,7 +124,13 @@ export class InMemoryKafka
   }
 
   async subscribeEach(
-    { groupId, topics, fromBeginning = false, onRevoked }: SubscribeEachOptions,
+    {
+      groupId,
+      topics,
+      fromBeginning = false,
+      onRevoked,
+      autoCommit = false,
+    }: SubscribeEachOptions,
     handler: MessageHandler,
   ): Promise<MessageSubscription> {
     const committed = this.groupOffsets(groupId, topics, fromBeginning);
@@ -141,6 +154,8 @@ export class InMemoryKafka
           if (subscription.stopped || cursor.generation !== generation) return;
           try {
             await handler(message, context);
+            // The real client commits stored offsets later, in the background
+            if (autoCommit) await context.commit(message);
           } catch (err) {
             this.handlerErrors.push(err);
             if (cursor.generation === generation) {
@@ -156,6 +171,15 @@ export class InMemoryKafka
     subscription.onRevoked = onRevoked;
 
     return { stop: () => this.stop(subscription), ...context };
+  }
+
+  // --- TopicAdmin ---
+
+  async ensureTopic(
+    topic: string,
+    { numPartitions }: { numPartitions: number },
+  ): Promise<void> {
+    if (!this.ensured.has(topic)) this.ensured.set(topic, numPartitions);
   }
 
   // --- CompactedTopicReader ---
@@ -175,6 +199,11 @@ export class InMemoryKafka
   /** Every message stored on `topic`, in offset order. */
   sent(topic: string): IncomingMessage[] {
     return [...this.topicLog(topic)];
+  }
+
+  /** Topics created through `ensureTopic`, with the partition count they were created with. */
+  topics(): Map<string, number> {
+    return new Map(this.ensured);
   }
 
   /** Makes the next `send` call reject with `error` without storing anything. */

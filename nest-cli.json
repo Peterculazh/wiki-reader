@@ -17,6 +17,15 @@
         "tsConfigPath": "apps/archiver/tsconfig.app.json"
       }
     },
+    "bursts": {
+      "type": "application",
+      "root": "apps/bursts",
+      "entryFile": "main",
+      "sourceRoot": "apps/bursts/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/bursts/tsconfig.app.json"
+      }
+    },
     "ingester": {
       "type": "application",
       "root": "apps/ingester",

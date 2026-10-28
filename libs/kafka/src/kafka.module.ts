@@ -8,10 +8,12 @@ import {
 import { KafkaCompactedTopicReader } from './kafka/compacted-reader.js';
 import { KafkaConsumerFactory } from './kafka/consumer.js';
 import { KafkaMessageProducer } from './kafka/producer.js';
+import { KafkaTopicAdmin } from './kafka/topic-admin.js';
 import {
   CompactedTopicReader,
   MessageConsumerFactory,
   MessageProducer,
+  TopicAdmin,
 } from './ports.js';
 
 @Module({})
@@ -25,8 +27,14 @@ export class KafkaModule {
         { provide: MessageProducer, useClass: KafkaMessageProducer },
         { provide: MessageConsumerFactory, useClass: KafkaConsumerFactory },
         { provide: CompactedTopicReader, useClass: KafkaCompactedTopicReader },
+        { provide: TopicAdmin, useClass: KafkaTopicAdmin },
       ],
-      exports: [MessageProducer, MessageConsumerFactory, CompactedTopicReader],
+      exports: [
+        MessageProducer,
+        MessageConsumerFactory,
+        CompactedTopicReader,
+        TopicAdmin,
+      ],
     };
   }
 }

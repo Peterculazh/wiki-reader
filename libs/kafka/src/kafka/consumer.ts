@@ -68,9 +68,14 @@ export class KafkaConsumerFactory
 
     // Buffered messages of a revoked partition were never committed: drop
     // them and let the next owner read them again from the last commit
-    const consumer = this.createConsumer(groupId, fromBeginning, (revoked) => {
-      for (const tp of revoked) dropChunker(partitionKey(tp));
-    });
+    const consumer = this.createConsumer(
+      groupId,
+      fromBeginning,
+      false,
+      (revoked) => {
+        for (const tp of revoked) dropChunker(partitionKey(tp));
+      },
+    );
 
     const chunkerFor = (topic: string, partition: number) => {
       const key = partitionKey({ topic, partition });
@@ -115,7 +120,13 @@ export class KafkaConsumerFactory
   }
 
   async subscribeEach(
-    { groupId, topics, fromBeginning = false, onRevoked }: SubscribeEachOptions,
+    {
+      groupId,
+      topics,
+      fromBeginning = false,
+      onRevoked,
+      autoCommit = false,
+    }: SubscribeEachOptions,
     handler: MessageHandler,
   ): Promise<MessageSubscription> {
     const owned = new Map<string, TopicPartition>();
@@ -129,6 +140,7 @@ export class KafkaConsumerFactory
     const consumer = this.createConsumer(
       groupId,
       fromBeginning,
+      autoCommit,
       revoke,
       (assigned) => {
         for (const tp of assigned) owned.set(partitionKey(tp), tp);
@@ -181,11 +193,14 @@ export class KafkaConsumerFactory
   private createConsumer(
     groupId: string,
     fromBeginning: boolean,
+    autoCommit: boolean,
     onRevoke: (partitions: TopicPartition[]) => void,
     onAssign?: (partitions: TopicPartition[]) => void,
   ): KafkaJS.Consumer {
     return this.kafka.consumer({
-      kafkaJS: { groupId, fromBeginning, autoCommit: false },
+      // With autoCommit the client stores each offset once eachMessage resolved
+      // and commits them periodically and on disconnect
+      kafkaJS: { groupId, fromBeginning, autoCommit },
       rebalance_cb: (
         err: { code: number },
         assignment: KafkaJS.TopicPartition[],

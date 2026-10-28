@@ -5,6 +5,7 @@ import {
   KafkaModule,
   MessageConsumerFactory,
   MessageProducer,
+  TopicAdmin,
 } from '@app/kafka';
 import { describeKafkaContract } from '../src/testing/kafka.contract.js';
 
@@ -25,6 +26,12 @@ describeKafkaContract(`real broker (${brokers.join(',')})`, async () => {
     producer: app.get(MessageProducer),
     consumers: app.get(MessageConsumerFactory),
     reader: app.get(CompactedTopicReader),
+    admin: {
+      ensureTopic: async (name, options) => {
+        await app.get(TopicAdmin).ensureTopic(name, options);
+        if (!created.includes(name)) created.push(name);
+      },
+    },
     createTopic: async (name) => {
       await admin.createTopics({ topics: [{ topic: name, numPartitions: 1 }] });
       created.push(name);
