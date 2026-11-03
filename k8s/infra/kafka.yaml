@@ -1,0 +1,95 @@
+# Kafka run by the Strimzi operator. We declare what we want (a Kafka cluster
+# and a pool of nodes); the operator creates the pods, services, config and
+# certificates, and rolls the brokers one at a time when something changes.
+#
+# Mirrors docker-compose.yml: three KRaft nodes, each both controller and broker.
+
+# A node pool is a group of Kafka nodes that share roles, storage and pod settings.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  labels:
+    # Which Kafka cluster this pool belongs to
+    strimzi.io/cluster: wiki
+spec:
+  replicas: 3
+  # Like compose: every node is a controller (KRaft quorum) and a broker.
+  # Three controllers keep a quorum with one of them down.
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        # kind's default StorageClass (rancher local-path-provisioner): the PV is a
+        # directory on the node the pod was first scheduled to, so the pod is tied
+        # to that node from then on (see the README's node experiment)
+        class: standard
+        # local-path doesn't enforce the size; it's what the PVC asks for
+        size: 5Gi
+        # The KRaft metadata log lives on this volume too
+        kraftMetadata: shared
+        # Keep the PVCs if the pool shrinks or is deleted (data survives a mistake)
+        deleteClaim: false
+  # Heap well below the memory limit: the rest is metaspace, thread stacks,
+  # network buffers. The OS page cache Kafka reads from comes on top and is
+  # reclaimable, so it doesn't count against the limit the way the heap does.
+  jvmOptions:
+    -Xms: 512m
+    -Xmx: 512m
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 200m
+    limits:
+      memory: 1Gi
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:
+          # "required", not "preferred": never two brokers on one node, or losing
+          # that node would take out two of three replicas (below min.insync.replicas=2)
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: wiki
+                  strimzi.io/pool-name: dual-role
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: wiki
+spec:
+  kafka:
+    version: 4.3.1
+    metadataVersion: 4.3-IV0
+    listeners:
+      # In-cluster only, no TLS or auth (local learning setup). Strimzi creates the
+      # Service wiki-kafka-bootstrap:9092, which the apps, KEDA and Kafbat use to
+      # bootstrap; brokers then advertise their own per-pod addresses.
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+    config:
+      # Same durability settings as compose (see README, Kafka replication)
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      num.partitions: 3
+      # Every topic is declared as a KafkaTopic (topics.yaml), so a typo in a
+      # topic name fails loudly instead of silently creating a new topic
+      auto.create.topics.enable: false
+      # Like compose: a consumer group starts at once instead of waiting 3 s
+      # for more members, so rebalances in the experiments are quicker to watch
+      group.initial.rebalance.delay.ms: 0
+  entityOperator:
+    # Syncs KafkaTopic resources to real topics. No userOperator: without
+    # authentication there are no Kafka users to manage.
+    topicOperator: {}

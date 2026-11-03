@@ -1,6 +1,15 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { EventSource } from 'eventsource';
-import { CompactedTopicReader, MessageProducer } from '@app/kafka';
+import {
+  CompactedTopicReader,
+  MessageProducer,
+  OutgoingMessage,
+  pageKey,
+  TopicAdmin,
+  WIKI_CHANGES_LATEST_TOPIC,
+  WIKI_CHANGES_PARTITIONS,
+  WIKI_CHANGES_TOPIC,
+} from '@app/kafka';
 
 type RecentChangeEvent = {
   $schema: string;
@@ -71,9 +80,21 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly producer: MessageProducer,
     private readonly compactedReader: CompactedTopicReader,
+    private readonly topicAdmin: TopicAdmin,
   ) {}
 
   async onModuleInit() {
+    // Declared here rather than auto-created by the first write, which would give
+    // them the broker's defaults: the wrong partition count, and `delete` instead
+    // of `compact` for the position (it would expire after retention.ms)
+    await this.topicAdmin.ensureTopic(WIKI_CHANGES_TOPIC, {
+      numPartitions: WIKI_CHANGES_PARTITIONS,
+    });
+    await this.topicAdmin.ensureTopic(WIKI_CHANGES_LATEST_TOPIC, {
+      numPartitions: 1,
+      configs: { 'cleanup.policy': 'compact' },
+    });
+
     const resumeId = await this.readLatestEventId();
     console.log(
       resumeId
@@ -113,7 +134,7 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
     let lastStoredEventTimestamp = 0;
     this.eventsource.onmessage = async (event) => {
       try {
-        await this.producer.send('wiki.changes', [{ value: event.data }]);
+        await this.producer.send(WIKI_CHANGES_TOPIC, [toChange(event.data)]);
 
         const now = Date.now();
 
@@ -122,7 +143,7 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
           try {
             const id = event.lastEventId;
             // Compacted topic: broker rejects keyless records
-            await this.producer.send('wiki.changes.latest', [
+            await this.producer.send(WIKI_CHANGES_LATEST_TOPIC, [
               { key: 'latest', value: JSON.stringify({ latestId: id }) },
             ]);
           } catch (err) {
@@ -141,7 +162,7 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
    * Returns null when nothing is stored yet or the read fails, so the stream starts live.
    */
   private async readLatestEventId(): Promise<string | null> {
-    const topic = 'wiki.changes.latest';
+    const topic = WIKI_CHANGES_LATEST_TOPIC;
     try {
       const stored = (await this.compactedReader.readAll(topic)).get('latest');
       if (!stored) return null;
@@ -156,4 +177,27 @@ export class IngesterService implements OnModuleInit, OnModuleDestroy {
     // The producer disconnects later, in KafkaModule's shutdown hook
     this.eventsource.close();
   }
+}
+
+/**
+ * Keys an event by its page, so every edit of one page lands on the same
+ * partition. An event that isn't JSON or has no page is still forwarded, keyless.
+ */
+function toChange(data: string): OutgoingMessage {
+  let event: Partial<RecentChangeEvent> | null;
+  try {
+    event = JSON.parse(data) as Partial<RecentChangeEvent> | null;
+  } catch {
+    console.warn(
+      `Event is not valid JSON, sending it without a key: ${data.slice(0, 200)}`,
+    );
+    return { value: data };
+  }
+  if (typeof event?.wiki === 'string' && typeof event.title === 'string') {
+    return { key: pageKey(event.wiki, event.title), value: data };
+  }
+  console.warn(
+    `Event has no wiki/title, sending it without a key: ${data.slice(0, 200)}`,
+  );
+  return { value: data };
 }

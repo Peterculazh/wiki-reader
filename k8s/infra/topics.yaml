@@ -1,0 +1,41 @@
+# Every topic the apps use, declared up front (the brokers have
+# auto.create.topics.enable=false). The Strimzi Topic Operator creates them and
+# keeps their partitions and config in line with these resources.
+#
+# The ingester and bursts also create their topics on startup (TopicAdmin.ensureTopic),
+# which is a no-op here because these exist first. RF 3 matches the broker default.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  # A Kubernetes name may contain dots, so it can be the topic name itself
+  name: wiki.changes
+  labels:
+    strimzi.io/cluster: wiki
+spec:
+  # Keyed by page; 3 partitions = at most 3 useful archiver/bursts instances
+  partitions: 3
+  replicas: 3
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: wiki.changes.latest
+  labels:
+    strimzi.io/cluster: wiki
+spec:
+  partitions: 1
+  replicas: 3
+  config:
+    # Keeps the last record per key forever, so the ingester's resume position
+    # never expires the way it would with the default delete + retention.ms
+    cleanup.policy: compact
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: wiki.bursts
+  labels:
+    strimzi.io/cluster: wiki
+spec:
+  partitions: 6
+  replicas: 3

@@ -1,0 +1,111 @@
+# S3-compatible storage for the archiver: one SeaweedFS process running master,
+# volume server, filer and S3 gateway together, the same as compose. Local only.
+
+# The S3 identities (same content as seaweedfs/s3.json). Kept as a copy because
+# Kustomize refuses to read files from outside its own directory tree.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: seaweedfs-s3-config
+type: Opaque
+stringData:
+  s3.json: |
+    {
+      "identities": [
+        {
+          "name": "dev",
+          "credentials": [{ "accessKey": "dev", "secretKey": "devsecret" }],
+          "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+        }
+      ]
+    }
+---
+# Archived chunks survive pod restarts. ReadWriteOnce: one node mounts it at a time.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-data
+spec:
+  storageClassName: standard
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the new pod can't start while the old one still
+  # holds the ReadWriteOnce volume (and two SeaweedFS processes on one data
+  # directory would corrupt it)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: seaweedfs
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.52
+          # The image's entrypoint takes the weed subcommand, like compose's `command:`
+          args:
+            - server
+            - -dir=/data
+            - -ip.bind=0.0.0.0
+            - -master.volumeSizeLimitMB=1024
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - name: s3
+              containerPort: 8333
+            - name: filer
+              containerPort: 8888
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: s3-config
+              mountPath: /etc/seaweedfs
+              readOnly: true
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 1Gi
+          # TCP, not HTTP: the S3 port answers anonymous requests with 403
+          readinessProbe:
+            tcpSocket:
+              port: s3
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: seaweedfs-data
+        - name: s3-config
+          secret:
+            secretName: seaweedfs-s3-config
+---
+# Stable in-cluster name: the archiver uses http://seaweedfs:8333
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+spec:
+  selector:
+    app: seaweedfs
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+    - name: filer
+      port: 8888
+      targetPort: filer

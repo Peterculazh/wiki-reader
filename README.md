@@ -16,11 +16,12 @@ NestJS monorepo ([nest-cli.json](nest-cli.json)):
 
 | Path | What it does |
 |---|---|
-| [apps/ingester](apps/ingester) | Reads the [recentchange](https://stream.wikimedia.org/v2/stream/recentchange) server-sent events (SSE) stream and publishes every event to `wiki.changes`. About once a minute it saves the last event ID to the compacted topic `wiki.changes.latest`, so after a restart it resumes where it left off. |
+| [apps/ingester](apps/ingester) | Reads the [recentchange](https://stream.wikimedia.org/v2/stream/recentchange) server-sent events (SSE) stream and publishes every event to `wiki.changes`, keyed by `<wiki>:<title>`. About once a minute it saves the last event ID to the compacted topic `wiki.changes.latest`, so after a restart it resumes where it left off. |
 | [apps/archiver](apps/archiver) | Consumes `wiki.changes` and writes each partition's messages to S3 as gzipped NDJSON chunks. |
 | [apps/bursts](apps/bursts) | Consumes `wiki.changes` and publishes one event to `wiki.bursts` whenever a page is suddenly edited by many different people. |
 | [libs/kafka](libs/kafka) | Kafka ports (`MessageProducer`, `MessageConsumerFactory`, `CompactedTopicReader`), a Confluent client implementation and an in-memory fake for tests. |
 | [libs/storage](libs/storage) | `ObjectStorage` port, an S3 implementation (AWS SDK v3) and an in-memory fake for tests. |
+| [libs/health](libs/health) | `GET /health/live` and `GET /health/ready` ([@nestjs/terminus](https://docs.nestjs.com/recipes/terminus)), used by the Kubernetes probes. Readiness equals liveness on purpose; see the comment in [health.controller.ts](libs/health/src/health.controller.ts). |
 
 ### How the archiver writes chunks
 
@@ -41,7 +42,7 @@ When something happens in the world, the Wikipedia article about it is edited by
 - Message key: `<wiki>:<title>`. The value carries `burstId` (consumers dedupe by it), `wiki`, `title`, `serverUrl`, `titleUrl`, `authors`, `users`, `editCount`, `windowStart`/`windowEnd`, the `revisions` in the window (`rev`, `oldRev`, `user`, `ts`, for fetching diffs from `serverUrl`) and `detectedAt`. The type is `BurstEvent` in [libs/kafka/src/events.ts](libs/kafka/src/events.ts).
 - The consumer group `bursts` starts at the end of `wiki.changes`, not the beginning, and auto-commits: state is in memory only and starts empty after a restart.
 - `wiki.bursts` is created on startup with 6 partitions.
-- **Run a single instance.** `wiki.changes` is keyless, so one page's edits are spread over every partition; a second instance would split each page's state and miss bursts.
+- **Several instances work, up to the partition count of `wiki.changes` (3).** The ingester keys every event by `<wiki>:<title>`, so all edits of one page land on one partition, and its state on the one instance that owns it. More instances than partitions sit idle. Every rebalance (an instance joining or leaving) starts the moved partitions' pages with empty state, so bursts in progress on them are missed.
 
 To check it, run `npm run start:dev -- bursts` next to the ingester, then open Kafka UI → Topics → `wiki.bursts` → Messages. A burst usually shows up within a few minutes on a busy day; set `BURST_MIN_AUTHORS=2` to see some sooner. The app logs each burst and, once a minute, how many events it saw and accepted, how many pages it tracks, and how many bursts it emitted or skipped as stale. Use those numbers to tune `BURST_MIN_AUTHORS`.
 
@@ -50,12 +51,14 @@ To check it, run `npm run start:dev -- bursts` next to the ingester, then open K
 - Node.js and npm
 - Docker with Compose
 
+For the Kubernetes setup (kind, kubectl, Helm) see [Kubernetes](#kubernetes).
+
 ## Getting started
 
 ```bash
 npm install
 
-# 3 Kafka brokers, Kafka UI, Postgres, SeaweedFS (S3), SeaweedFS admin UI
+# 3 Kafka brokers, Kafka UI, SeaweedFS (S3), SeaweedFS admin UI
 docker compose up -d
 
 # In separate terminals
@@ -74,7 +77,7 @@ KAFKA_BROKERS=localhost:9092,localhost:9094,localhost:9096
 PORT=3001   # 3002, 3003
 ```
 
-If you ran the project when Compose had a single `broker` service, run `docker compose up -d --remove-orphans` once. The old container can keep host port `9092` reserved, and `kafka-1` then starts without a network.
+If you ran the project when Compose still had a `postgres` service, run `docker compose up -d --remove-orphans` once to remove its container (nothing used it). The same goes for the old single `broker` service: its container can keep host port `9092` reserved, and `kafka-1` then starts without a network.
 
 ## Configuration
 
@@ -101,7 +104,7 @@ The other settings have local defaults that match [docker-compose.yml](docker-co
 
 The archiver reads the `S3_*` variables before the env files are loaded, so for now set them in the real environment, not in `.env` (see [Known issues](#known-issues)).
 
-Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_ADMIN_PORT`, `POSTGRES_PORT`.
+Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_ADMIN_PORT`.
 
 ## Local services
 
@@ -138,7 +141,7 @@ With the archiver running, run `docker stop seaweedfs`. The archiver logs failed
 ### Setup
 
 - **Three KRaft nodes** (`kafka-1`, `kafka-2`, `kafka-3`), each both broker and controller. Three controllers keep a quorum with one node down; with two down the cluster stops.
-- **Replication factor 3 and `min.insync.replicas=2`** as broker defaults, so topics the apps create get them too (`wiki.changes` is auto-created by the first write).
+- **Replication factor 3 and `min.insync.replicas=2`** as broker defaults, so topics the apps create get them too. The ingester creates `wiki.changes` (3 partitions) and `wiki.changes.latest` (1 partition, compacted) on startup, and bursts creates `wiki.bursts`.
 - **`__consumer_offsets` also has RF 3.** Committed offsets and the group coordinator live there; with RF 1 one broker failure would stall every consumer group.
 - **Producer: `acks=all` and idempotence** ([producer.ts](libs/kafka/src/kafka/producer.ts)). A write is acknowledged only once every in-sync replica (ISR) has it, and at least `min.insync.replicas` of them must be in sync. Idempotence (producer ID plus a per-partition sequence number) lets the broker drop batches that a retry sends twice, and keeps order across retries.
 - **Two listeners per broker.** `INTERNAL://kafka-N:29092` is for other containers (brokers, Kafka UI). `EXTERNAL://localhost:9092/9094/9096` is for apps on the host. A client asks a bootstrap broker for metadata, then connects to the addresses brokers advertise. So `EXTERNAL` must advertise `localhost`: a container name like `kafka-1` doesn't resolve on the host, and the apps fail with `Failed to resolve 'kafka-1:9092'`.
@@ -183,9 +186,259 @@ The preferred leader is the first broker in a partition's `Replicas` list.
 
 If `__consumer_offsets` had RF 1 and the coordinator's data were lost, the groups would restart without offsets and the two consumers would fail in opposite ways. The archiver (`fromBeginning: true`) would archive the whole topic again; bursts (`fromBeginning: false`) would silently skip everything between its last commit and the end of the topic.
 
+## Kubernetes
+
+The same pipeline on a local [kind](https://kind.sigs.k8s.io/) cluster: Kafka run by the [Strimzi](https://strimzi.io/) operator, SeaweedFS as S3, and the archiver autoscaled by [KEDA](https://keda.sh/) on its consumer lag. Everything lives in [k8s/](k8s), as plain manifests with comments on the non-obvious choices. It's independent of the Compose setup, and both can run at the same time.
+
+```
+kind cluster "wiki": 1 control-plane + 3 workers (Docker containers)
+├── namespace strimzi   Strimzi cluster operator (Helm)
+├── namespace keda      KEDA operator + metrics server (Helm)
+└── namespace wiki
+    ├── Kafka "wiki": 3 KRaft nodes (controller + broker), one per worker, PVC each
+    ├── KafkaTopics: wiki.changes (3), wiki.changes.latest (1, compacted), wiki.bursts (6)
+    ├── Kafbat UI, SeaweedFS (S3)                                      k8s/infra
+    └── ingester, archiver (+ ScaledObject), bursts                    k8s/apps
+```
+
+| Path | What it is |
+|---|---|
+| [k8s/kind-config.yaml](k8s/kind-config.yaml) | The cluster: one control-plane node and three workers, pinned node image |
+| [k8s/namespace.yaml](k8s/namespace.yaml) | Namespace `wiki`, created before Strimzi (its chart sets up permissions there) |
+| [k8s/infra/](k8s/infra) | Kustomization: `Kafka` + `KafkaNodePool`, `KafkaTopic`s, Kafbat UI, SeaweedFS |
+| [k8s/apps/](k8s/apps) | Kustomization: ConfigMap + Secret, the three Deployments, the archiver's `ScaledObject` |
+| [Dockerfile](Dockerfile) | One image, `wiki-reader:dev`, with all three apps; each Deployment runs `node dist/apps/<app>/main.js` |
+| [k8s/up.sh](k8s/up.sh), [k8s/down.sh](k8s/down.sh) | The setup and teardown steps below, as scripts |
+
+### Prerequisites
+
+Versions used (pinned in the scripts and manifests):
+
+| Tool | Version |
+|---|---|
+| Docker (Docker Desktop) | 29.8.0 |
+| kind | 0.33.0, node image `kindest/node:v1.35.8` |
+| kubectl | 1.35.4 |
+| Helm | 4.3.1 |
+| Strimzi chart | 1.3.0 (Kafka 4.3.1) |
+| KEDA chart | 2.21.0 |
+
+On Windows: `winget install Kubernetes.kind --version 0.33.0` and `winget install Helm.Helm --version 4.3.1`. Run the commands in Git Bash or WSL. In Git Bash, `export MSYS_NO_PATHCONV=1` first: otherwise Git Bash rewrites arguments such as `/health/live` into Windows paths before kubectl sees them. The scripts set it themselves.
+
+The cluster needs about 6 GB of memory in Docker: three brokers at 1 GiB each, plus the operators and the apps.
+
+### Setup
+
+`bash k8s/up.sh` runs these steps; they're also safe to re-run one by one. From the repo root:
+
+```bash
+export MSYS_NO_PATHCONV=1   # Git Bash only
+
+# 1. Cluster: 4 Docker containers named wiki-control-plane, wiki-worker, wiki-worker2, wiki-worker3
+kind create cluster --config k8s/kind-config.yaml
+
+# 2. Namespace, then the operators. Strimzi watches only the wiki namespace.
+kubectl apply -f k8s/namespace.yaml
+helm upgrade --install strimzi oci://quay.io/strimzi-helm/strimzi-kafka-operator \
+  --version 1.3.0 --namespace strimzi --create-namespace --set 'watchNamespaces={wiki}' --wait
+helm repo add kedacore https://kedacore.github.io/charts --force-update
+helm upgrade --install keda kedacore/keda --version 2.21.0 --namespace keda --create-namespace --wait
+
+# 3. Infrastructure, and wait until Kafka and its topics are ready (the first run pulls images: a few minutes)
+kubectl apply -k k8s/infra
+kubectl -n wiki wait kafka/wiki --for=condition=Ready --timeout=10m
+kubectl -n wiki wait kafkatopic --all --for=condition=Ready --timeout=3m
+kubectl -n wiki rollout status deploy/seaweedfs --timeout=5m
+kubectl -n wiki rollout status deploy/kafbat-ui --timeout=5m
+
+# 4. App image: build, check that the native Kafka client loads, copy it into the kind nodes
+docker build -t wiki-reader:dev .
+docker run --rm wiki-reader:dev node --input-type=module \
+  -e "import k from '@confluentinc/kafka-javascript'; console.log('librdkafka', k.librdkafkaVersion)"
+kind load docker-image wiki-reader:dev --name wiki
+
+# 5. Apps
+kubectl apply -k k8s/apps
+kubectl -n wiki rollout status deploy/ingester
+kubectl -n wiki rollout status deploy/archiver
+kubectl -n wiki rollout status deploy/bursts
+```
+
+There is no registry. `kind load` copies the image into each node, and the Deployments use `imagePullPolicy: IfNotPresent` with a non-`latest` tag, so Kubernetes uses that copy instead of trying to pull. After changing the code, rebuild, load it again and run `kubectl -n wiki rollout restart deploy/<app>`. Better still, use a new tag (`wiki-reader:dev2`) and `kubectl -n wiki set image deploy/<app> <app>=wiki-reader:dev2`, so the rollout really is a new version.
+
+### Teardown
+
+```bash
+bash k8s/down.sh   # = kind delete cluster --name wiki: deletes every node, volume and object
+```
+
+### Check that it works
+
+```bash
+kubectl -n wiki get pods -o wide
+```
+
+Everything should be `1/1 Running`. `wiki-dual-role-0/1/2` are the three brokers, one per worker (the `NODE` column). `wiki-entity-operator` runs Strimzi's Topic Operator.
+
+The commands below run Kafka's CLI inside a broker pod. Its working directory is `/opt/kafka`, hence the relative `bin/...` paths.
+
+```bash
+# Logs: each app prints "Nest application successfully started"; the ingester then prints "Connection to server opened."
+kubectl -n wiki logs deploy/ingester --tail=20
+
+# Messages are keyed by <wiki>:<title>
+kubectl -n wiki exec wiki-dual-role-0 -- bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic wiki.changes --max-messages 3 --formatter-property print.key=true --formatter-property print.value=false
+
+# Health endpoints (what the probes call)
+kubectl -n wiki exec deploy/archiver -- node -e "fetch('http://localhost:3000/health/ready').then(r => r.text()).then(console.log)"
+
+# Archived chunks in S3, after a minute or so
+kubectl -n wiki exec deploy/seaweedfs -- sh -c 'echo "fs.ls -l /buckets/wiki-archive/wiki.changes/partition=0/" | weed shell'
+
+# Bursts: usually a few within the first half hour. The app logs "Burst on ..." for each one.
+kubectl -n wiki exec wiki-dual-role-0 -- bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
+  --topic wiki.bursts --from-beginning --max-messages 1 --formatter-property print.key=true
+```
+
+**Kafbat UI:** `kubectl -n wiki port-forward svc/kafbat-ui 8080:8080`, then open http://localhost:8080. If Compose's Kafbat already uses 8080, pick another local port, e.g. `18080:8080`. Under Consumers you'll see `archiver`, `bursts` and short-lived `ingester-compacted-reader-*` groups: the ingester reads its stored position with a throwaway group on every start.
+
+To see bursts sooner, set `BURST_MIN_AUTHORS: "2"` in [k8s/apps/config.yaml](k8s/apps/config.yaml), then run `kubectl apply -k k8s/apps` and `kubectl -n wiki rollout restart deploy/bursts`. Pods read env vars only when they start.
+
+### Experiments
+
+Each experiment starts from a healthy cluster. Keep a second terminal running `kubectl -n wiki get pods -o wide -w` to watch pods come and go. These two helpers show partition state and consumer lag:
+
+```bash
+topics() { kubectl -n wiki exec wiki-dual-role-0 -- bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --topic wiki.changes; }
+group()  { kubectl -n wiki exec wiki-dual-role-0 -- bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group archiver "$@"; }
+```
+
+(If you delete `wiki-dual-role-0` itself, run them against another broker pod.)
+
+#### 1. Delete a broker pod
+
+```bash
+topics                                   # note Leader and Isr per partition
+kubectl -n wiki delete pod wiki-dual-role-0
+topics                                   # run it from wiki-dual-role-1 while 0 is down
+```
+
+What happens:
+- `kubectl delete` stops the broker gracefully. It hands its leaderships over first (controlled shutdown), so the partitions it led get a new leader at once, e.g. `Partition: 1 Leader: 1 ... Isr: 1,2`.
+- The ISR shrinks to the two live brokers, which still meets `min.insync.replicas=2`, so writes go on.
+- Strimzi recreates the pod within seconds, **with the same name and on the same PVC**. Brokers aren't interchangeable the way a Deployment's pods are; each has an identity (node ID 0) and its own data. Strimzi manages them with its own StrimziPodSet, which works like a StatefulSet.
+- About 10 s after the pod is back, the ISR is `0,1,2` again. The broker has caught up from where its log ended, not from scratch.
+- Leadership stays where it moved until the controller's preferred-leader check (every 5 min) moves it back. To do it right away: `kubectl -n wiki exec wiki-dual-role-1 -- bin/kafka-leader-election.sh --bootstrap-server localhost:9092 --election-type PREFERRED --all-topic-partitions`.
+
+#### 2. Stop a worker node
+
+```bash
+kubectl -n wiki get pods -o wide | grep dual-role   # pick a node, e.g. the one running wiki-dual-role-1
+docker stop wiki-worker3
+kubectl get nodes -w                                # NotReady after ~40-60 s
+```
+
+What happens:
+- **~40–60 s:** the node goes `NotReady`, but its pods still show `Running`. Kubernetes can't tell a dead node from a network split, so it waits.
+- **~300 s:** the default `not-ready` toleration on every pod expires, and the pods are evicted. A Deployment's pod (Kafbat UI) gets a replacement on another node right away. The broker shows `Terminating` and stays that way: no kubelet is left to confirm it stopped, and Strimzi won't start a second pod with the same identity while the first might still be running.
+- Meanwhile Kafka carries on with two brokers: `topics` shows an ISR of `0,2`, and writes still succeed.
+- Force the old pod away to see where its replacement could go:
+
+  ```bash
+  kubectl -n wiki delete pod wiki-dual-role-1 --grace-period=0 --force
+  kubectl -n wiki describe pod wiki-dual-role-1 | tail -3
+  # 0/4 nodes are available: 2 node(s) didn't match PersistentVolume's node affinity, 2 node(s) had untolerated taint(s).
+  ```
+
+  It stays `Pending`.
+
+**Why:** kind's `standard` StorageClass is [local-path-provisioner](https://github.com/rancher/local-path-provisioner). A volume is a directory on the disk of the node where the pod first ran, and its PV carries a node affinity for that node: `kubectl get pv -o wide`, or `.spec.nodeAffinity` in `kubectl get pv -o yaml`. The two healthy workers fail that check. The other two nodes are the control plane (tainted) and the stopped worker (tainted unreachable). The broker's data simply isn't reachable from anywhere else. A cloud disk could be detached and attached on another node in the same zone; a local disk can't. The pod anti-affinity would also keep it off workers that already run a broker, but the PV rules them out first.
+
+Bring the node back with `docker start wiki-worker3`. The pending pod is scheduled there as soon as the node is `Ready`; the broker was Ready about 25 s after `docker start`, and the ISR is full again soon after.
+
+#### 3. Scale the archiver by hand, past the partition count
+
+KEDA owns the archiver's replica count, so pause it first. With `paused: "true"`, KEDA removes its HPA and leaves the count as it is:
+
+```bash
+kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused="true" --overwrite
+kubectl -n wiki get hpa                                # No resources found
+kubectl -n wiki scale deploy/archiver --replicas=3
+group --members                                        # 3 members, #PARTITIONS 1 each
+kubectl -n wiki scale deploy/archiver --replicas=4
+group --members                                        # one member has #PARTITIONS 0
+```
+
+What happens:
+- Every scale step is a rebalance. Each archiver log shows `Revoke partitions` and then `Assign partitions`. With the client's default (eager) protocol, every member gives up all its partitions, even the ones it gets back.
+- Revoked partitions drop their in-memory chunk buffers, so the next owner re-reads from the last commit and writes those chunks under the same keys (no duplicates in S3).
+- The 4th pod logs `Assign partitions' and 0 partition(s)` and sits idle: a partition is never shared by two members of a group. Partitions are the unit of parallelism.
+
+Unpause with `kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused-`. KEDA recreates its HPA, which immediately caps the archiver at `maxReplicaCount: 3`, and scales down to 1 about 30 s later.
+
+#### 4. KEDA: build up lag, then let it scale
+
+Pause at 0 replicas, so nothing consumes and lag builds up (the topic grows by about 30 events/s):
+
+```bash
+kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused-replicas="0" --overwrite
+kubectl -n wiki get deploy archiver        # 0/0
+group                                      # LAG grows; no CONSUMER-ID
+```
+
+After a few minutes, remove the annotation and watch the HPA, which KEDA feeds with the lag:
+
+```bash
+kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused-replicas-
+kubectl -n wiki get hpa keda-hpa-archiver -w     # TARGETS = lag per replica / lagThreshold (1k)
+```
+
+**What you'll most likely see: it stays at 1.** On unpause, KEDA first restores `minReplicaCount: 1`. That one archiver drains even a 30,000-message backlog (15 min of pause) within about 15 s, before the HPA's first check (it polls every 15 s). An archiver handles thousands of messages a second; the stream brings 30. Lag-based autoscaling only pays off when consumers are slower than producers, and this one isn't.
+
+To see the full cycle, make the archiver slower than its input for the experiment, with a tiny CPU limit:
+
+```bash
+kubectl -n wiki set resources deploy/archiver -c archiver --requests=cpu=25m --limits=cpu=25m
+kubectl -n wiki rollout status deploy/archiver
+kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused-replicas="0" --overwrite
+# wait ~3-5 minutes, then
+kubectl -n wiki annotate scaledobject archiver autoscaling.keda.sh/paused-replicas-
+kubectl -n wiki get hpa keda-hpa-archiver -w
+```
+
+Observed timeline:
+- **~15 s:** the HPA sees `3k/1k` and sets 3 replicas. The new pods start slowly under 25m of CPU.
+- **~50 s:** all three are Ready, one partition each, and the lag drains.
+- **~70 s:** back to 1. That's the HPA's scale-down stabilization window (30 s, set in the ScaledObject; the default is 300 s) after the lag fell below the threshold.
+
+Then restore the real resources: `kubectl apply -k k8s/apps`. Re-applying doesn't reset the replica count, because the archiver Deployment has no `replicas` field; the HPA owns it.
+
+Why `lagThreshold` is 1000 and not lower: the archiver commits only after a whole 300-message chunk is stored, so with no backlog at all its lag swings between ~100 and ~750. With a threshold of 500, KEDA would keep a second replica running for nothing.
+
+A tempting alternative is to stop S3 (`kubectl -n wiki scale deploy/seaweedfs --replicas=0`): lag does grow and KEDA asks for 3 replicas. But the new pods crash-loop, because the archiver creates its bucket on startup and S3 is down. Only the pod that was already running stays up. Scaling on lag can't help when the bottleneck is downstream. Scale SeaweedFS back to 1, and the lag drains and the archiver drops back to 1.
+
+#### 5. Roll out a new ingester version
+
+```bash
+kubectl -n wiki get pods -l app=ingester -w     # second terminal
+kubectl -n wiki rollout restart deploy/ingester # or: set image to a new tag, see Setup
+```
+
+What happens, with `strategy: Recreate`:
+- The old pod shuts down first: it shows `Completed` (exit code 0, graceful shutdown).
+- Only then is the new pod created. It goes `ContainerCreating` → `Running` → `1/1`, about 3 s with no reader at all, and never two at once.
+- The new pod logs `Resuming from ...` and asks the stream to replay from the position stored in `wiki.changes.latest`, so the gap isn't lost. The position is saved about once a minute, so up to a minute of events is published again; consumers see them twice (at least once).
+- With the default `RollingUpdate`, the new pod would start, and become Ready, while the old one still ran. For those seconds two SSE readers would publish every event twice.
+
 ## Known issues
 
-- **`wiki.changes.latest` isn't compacted.** The ingester never creates it, so the broker auto-creates it with `cleanup.policy=delete`. After `retention.ms` (7 days by default) the stored position is deleted and the ingester starts live, without replaying what it missed. It should create the topic with `cleanup.policy=compact` on startup, the way bursts creates `wiki.bursts`.
+- **An old `wiki.changes.latest` may not be compacted.** The ingester now creates it with `cleanup.policy=compact` on startup, but creating a topic is a no-op when it already exists. If an earlier version let the broker auto-create it, it still has `cleanup.policy=delete`: after `retention.ms` (7 days by default) the stored position is deleted and the ingester starts live, without replaying what it missed. Check it, and fix it once. An empty list under `Dynamic configs` means the topic uses the broker default, `delete`. An auto-created one also has 3 partitions instead of 1, which is harmless: its single key always lands on the same one.
+
+  ```bash
+  docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka-1:29092 --describe --entity-type topics --entity-name wiki.changes.latest
+  docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka-1:29092 --alter --entity-type topics --entity-name wiki.changes.latest --add-config cleanup.policy=compact
+  ```
 - **The ingester drops events it fails to send.** It reads the stream with no backpressure, and on a failed `send()` it logs the event and moves on. It still saves later event IDs as its position, so a restart doesn't replay the gap. Instead it should stop reading on a failed send and reconnect from the last event it stored successfully (at least once; consumers can dedupe by event ID).
 - **`StorageModule` has no `forRootAsync`.** The archiver reads `S3_*` from `process.env` while modules are imported, before the env files are loaded, so values in `.env` are ignored.
 

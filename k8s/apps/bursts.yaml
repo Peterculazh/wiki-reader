@@ -1,0 +1,74 @@
+# Consumes wiki.changes, detects edit bursts and produces them to wiki.bursts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bursts
+spec:
+  # Fixed, not autoscaled. wiki.changes is keyed by page, so several instances
+  # would work (up to 3, one per partition), but the detector's state (who edited
+  # which page within the window) lives in memory. Every scale event triggers a
+  # rebalance, and the partitions that move start over with empty state on their
+  # new owner, so bursts in progress on them are missed. An autoscaler that adds
+  # and removes pods with the load would do that again and again.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bursts
+  template:
+    metadata:
+      labels:
+        app: bursts
+    spec:
+      # Shutdown: the consumer finishes the message in hand, commits its offsets
+      # (auto-commit) and leaves the group, then the producer flushes any
+      # bursts still queued (capped at 5 s). 30 s is plenty.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bursts
+          image: wiki-reader:dev
+          # Image loaded with `kind load docker-image`, see ingester.yaml
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/apps/bursts/main.js"]
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: wiki-reader-config
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            # Same reasoning as the archiver: room for librdkafka's 64 MB prefetch
+            # queue, plus the detector's per-page state for one window
+            limits:
+              memory: 384Mi
+              cpu: 500m
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

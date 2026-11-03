@@ -16,7 +16,7 @@ x-kafka-env: &kafka-env
 
 services:
   kafka-1:
-    image: apache/kafka:latest
+    image: apache/kafka:4.3.1
     container_name: kafka-1
     ports:
       - 9092:9092
@@ -25,7 +25,7 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-1:29092,EXTERNAL://localhost:9092
   kafka-2:
-    image: apache/kafka:latest
+    image: apache/kafka:4.3.1
     container_name: kafka-2
     ports:
       - 9094:9092
@@ -34,7 +34,7 @@ services:
       KAFKA_NODE_ID: 2
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-2:29092,EXTERNAL://localhost:9094
   kafka-3:
-    image: apache/kafka:latest
+    image: apache/kafka:4.3.1
     container_name: kafka-3
     ports:
       - 9096:9092
@@ -44,7 +44,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka-3:29092,EXTERNAL://localhost:9096
   kafbat-ui:
     container_name: kafbat-ui
-    image: ghcr.io/kafbat/kafka-ui:latest
+    image: ghcr.io/kafbat/kafka-ui:v1.5.0
     ports:
       - 8080:8080
     depends_on:
@@ -56,25 +56,8 @@ services:
     volumes:
       # Must be an existing file: if missing, Docker creates a directory and the UI crashes
       - ./kui/config.yml:/etc/kafkaui/dynamic_config.yaml
-  postgres:
-    image: postgres:latest
-    container_name: postgres
-    ports:
-      - ${POSTGRES_PORT:-5432}:5432
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-wiki}
-    volumes:
-      # Postgres 18+ keeps data under /var/lib/postgresql/<version>, so mount the parent
-      - pgdata:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    image: chrislusf/seaweedfs:4.52
     container_name: seaweedfs
     # Local-dev S3 only: master + volume + filer + S3 gateway in one process
     command: server -dir=/data -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024 -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
@@ -87,5 +70,4 @@ services:
       - seaweedfs-data:/data
 
 volumes:
-  pgdata:
   seaweedfs-data:

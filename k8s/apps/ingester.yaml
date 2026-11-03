@@ -1,0 +1,83 @@
+# Reads the Wikimedia SSE stream and produces every event to wiki.changes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingester
+spec:
+  # Exactly one reader of the stream. A second one would publish every event twice.
+  replicas: 1
+  # Recreate stops the old pod before starting the new one. The default
+  # RollingUpdate starts the new pod first and only then stops the old one, so for
+  # a while two SSE readers would run side by side, each publishing every event.
+  # The cost is a short gap during a rollout; the new pod resumes from the
+  # position stored in wiki.changes.latest, so nothing is skipped.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ingester
+  template:
+    metadata:
+      labels:
+        app: ingester
+    spec:
+      # Shutdown: close the stream (instant), then the producer flushes what's
+      # queued, capped at 5 s by the client. 30 s leaves plenty of slack.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ingester
+          image: wiki-reader:dev
+          # The image only exists inside kind (kind load docker-image), never in a
+          # registry. IfNotPresent uses that copy; it's also the default for any tag
+          # but :latest, which defaults to Always and would fail trying to pull.
+          imagePullPolicy: IfNotPresent
+          # node is PID 1, so it receives SIGTERM itself and Nest's shutdown hooks run
+          # (an `npm start` wrapper would be PID 1 instead and might not forward it)
+          command: ["node", "dist/apps/ingester/main.js"]
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: wiki-reader-config
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            # Headroom for the producer's local queue: when brokers refuse writes
+            # (see README, "Too few in-sync replicas") it holds up to 100k events,
+            # about 150 MB, before send() starts failing with "queue full"
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          # Startup can wait on Kafka (creating topics, reading the stored position).
+          # Until this passes, liveness isn't checked, so a slow start isn't a restart.
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            # The app never writes files, so the image can stay read-only at runtime
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

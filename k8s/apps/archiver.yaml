@@ -1,0 +1,79 @@
+# Consumes wiki.changes and writes gzipped NDJSON chunks to S3 (SeaweedFS).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: archiver
+spec:
+  # No `replicas` here: KEDA's HPA owns the count (archiver-scaledobject.yaml).
+  # A fixed value would reset it on every `kubectl apply -k`, fighting the
+  # autoscaler. Without the field Kubernetes starts with 1.
+  selector:
+    matchLabels:
+      app: archiver
+  template:
+    metadata:
+      labels:
+        app: archiver
+    spec:
+      # Shutdown waits for a chunk upload already in flight (the consumer's
+      # disconnect waits for the running batch handler). Worst case that upload
+      # times out: 5 s connect + 30 s request per attempt, 3 attempts by the AWS
+      # SDK, ~110 s. Then the consumer leaves the group and the producer flushes
+      # (5 s). If the pod were killed sooner, nothing is lost: the chunk wasn't
+      # committed, so the next owner re-reads it and overwrites the same key.
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: archiver
+          image: wiki-reader:dev
+          # Image loaded with `kind load docker-image`, see ingester.yaml
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/apps/archiver/main.js"]
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: wiki-reader-config
+            - secretRef:
+                name: wiki-reader-s3
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            # Sized for librdkafka's prefetch rather than lowering it: the consumer
+            # queues up to 64 MB of fetched messages (queued.max.messages.kbytes),
+            # and copies of them live on the JS heap while they're buffered into
+            # chunks (3 partitions x 300 messages) and gzipped. The queue only fills
+            # while catching up on a backlog; this leaves room for that on top of
+            # Node's own ~100 MB.
+            limits:
+              memory: 384Mi
+              cpu: 500m
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

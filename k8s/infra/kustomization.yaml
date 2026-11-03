@@ -1,0 +1,11 @@
+# Infrastructure the apps need: Kafka (Strimzi resources), topics, Kafka UI, S3.
+# Applied and waited for before k8s/apps:  kubectl apply -k k8s/infra
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Sets metadata.namespace on every resource below
+namespace: wiki
+resources:
+  - kafka.yaml
+  - topics.yaml
+  - kafbat-ui.yaml
+  - seaweedfs.yaml

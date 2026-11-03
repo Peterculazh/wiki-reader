@@ -45,6 +45,7 @@ describe('IngesterService', () => {
     streams.length = 0;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -62,6 +63,49 @@ describe('IngesterService', () => {
       '{"id":1}',
       '{"id":2}',
     ]);
+    await app.close();
+  });
+
+  it('creates its topics on startup, the position topic compacted', async () => {
+    const { app } = await start();
+
+    expect(kafka.topics()).toEqual(
+      new Map([
+        ['wiki.changes', 3],
+        ['wiki.changes.latest', 1],
+      ]),
+    );
+    expect(kafka.topicConfigs('wiki.changes')).toEqual({});
+    expect(kafka.topicConfigs('wiki.changes.latest')).toEqual({
+      'cleanup.policy': 'compact',
+    });
+    await app.close();
+  });
+
+  it('keys each event by wiki and title', async () => {
+    const { app, stream } = await start();
+
+    await stream.emit('{"wiki":"enwiki","title":"Kafka"}', 'pos-1');
+
+    expect(kafka.sent('wiki.changes').map((m) => m.key)).toEqual([
+      'enwiki:Kafka',
+    ]);
+    await app.close();
+  });
+
+  it('sends an event it cannot key without a key, and warns', async () => {
+    const { app, stream } = await start();
+
+    await stream.emit('not json', 'pos-1');
+    await stream.emit('{"wiki":"enwiki"}', 'pos-2');
+    await stream.emit('null', 'pos-3');
+
+    expect(kafka.sent('wiki.changes').map((m) => [m.key, m.value])).toEqual([
+      [null, 'not json'],
+      [null, '{"wiki":"enwiki"}'],
+      [null, 'null'],
+    ]);
+    expect(console.warn).toHaveBeenCalledTimes(3);
     await app.close();
   });
 

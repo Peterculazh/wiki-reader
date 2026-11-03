@@ -1,0 +1,13 @@
+# Built inside the image; the host's copies are for Windows anyway
+node_modules
+dist
+# Secrets and local state
+.env
+**/.env
+.git
+coverage
+# Not needed to build the apps
+k8s
+.vscode
+.idea
+*.md

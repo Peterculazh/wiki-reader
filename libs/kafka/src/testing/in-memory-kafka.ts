@@ -1,6 +1,7 @@
 import {
   BatchHandler,
   CompactedTopicReader,
+  EnsureTopicOptions,
   IncomingMessage,
   MessageConsumerFactory,
   MessageContext,
@@ -59,6 +60,8 @@ export class InMemoryKafka
   private readonly sendFailures: Error[] = [];
   /** topic -> requested partition count; delivery still uses partition 0 only */
   private readonly ensured = new Map<string, number>();
+  /** topic -> configs it was created with (stored only, not enforced) */
+  private readonly ensuredConfigs = new Map<string, Record<string, string>>();
 
   readonly handlerErrors: unknown[] = [];
 
@@ -177,9 +180,11 @@ export class InMemoryKafka
 
   async ensureTopic(
     topic: string,
-    { numPartitions }: { numPartitions: number },
+    { numPartitions, configs = {} }: EnsureTopicOptions,
   ): Promise<void> {
-    if (!this.ensured.has(topic)) this.ensured.set(topic, numPartitions);
+    if (this.ensured.has(topic)) return;
+    this.ensured.set(topic, numPartitions);
+    this.ensuredConfigs.set(topic, { ...configs });
   }
 
   // --- CompactedTopicReader ---
@@ -204,6 +209,12 @@ export class InMemoryKafka
   /** Topics created through `ensureTopic`, with the partition count they were created with. */
   topics(): Map<string, number> {
     return new Map(this.ensured);
+  }
+
+  /** Configs `topic` was created with through `ensureTopic`, or undefined if it never was. */
+  topicConfigs(topic: string): Record<string, string> | undefined {
+    const configs = this.ensuredConfigs.get(topic);
+    return configs && { ...configs };
   }
 
   /** Makes the next `send` call reject with `error` without storing anything. */

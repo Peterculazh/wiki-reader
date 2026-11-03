@@ -112,14 +112,21 @@ export abstract class MessageConsumerFactory {
   ): Promise<MessageSubscription>;
 }
 
+export type EnsureTopicOptions = {
+  numPartitions: number;
+  /** Topic-level configs such as `{ 'cleanup.policy': 'compact' }`, applied on creation only */
+  configs?: Record<string, string>;
+};
+
 export abstract class TopicAdmin {
   /**
    * Creates `topic` if it doesn't exist yet. An existing topic is left as is,
-   * even if its partition count differs, so calling this on every start is safe.
+   * even if its partition count or configs differ, so calling this on every
+   * start is safe.
    */
   abstract ensureTopic(
     topic: string,
-    options: { numPartitions: number },
+    options: EnsureTopicOptions,
   ): Promise<void>;
 }
 
