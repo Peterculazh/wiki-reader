@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HealthModule } from '@app/health';
 import { KafkaModule } from '@app/kafka';
 import { StorageModule } from '@app/storage';
 import { ArchiverService } from './archiver.service.js';
@@ -6,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
   imports: [
+    HealthModule,
     KafkaModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

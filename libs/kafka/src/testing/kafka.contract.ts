@@ -353,6 +353,18 @@ export function describeKafkaContract(
       await waitFor(() => expect(received).toEqual(['hello']));
     }, 60_000);
 
+    it('ensureTopic accepts topic configs, e.g. a compacted topic', async () => {
+      const compacted = `${topic}-compacted`;
+
+      await h.admin.ensureTopic(compacted, {
+        numPartitions: 1,
+        configs: { 'cleanup.policy': 'compact' },
+      });
+
+      await h.producer.send(compacted, [{ key: 'k', value: 'v' }]);
+      expect(await h.reader.readAll(compacted)).toEqual(new Map([['k', 'v']]));
+    }, 60_000);
+
     it('reads the last value per key, honouring tombstones and skipping keyless records', async () => {
       await h.producer.send(topic, [
         { key: 'a', value: '1' },

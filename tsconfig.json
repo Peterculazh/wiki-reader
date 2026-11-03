@@ -39,6 +39,12 @@
       ],
       "@app/storage/*": [
         "./libs/storage/src/*"
+      ],
+      "@app/health": [
+        "./libs/health/src/index.ts"
+      ],
+      "@app/health/*": [
+        "./libs/health/src/*"
       ]
     }
   },

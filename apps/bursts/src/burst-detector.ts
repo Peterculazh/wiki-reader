@@ -1,4 +1,4 @@
-import type { BurstEvent, RecentChangeEvent } from '@app/kafka';
+import { pageKey, type BurstEvent, type RecentChangeEvent } from '@app/kafka';
 
 export type BurstDetectorOptions = {
   windowMs: number;
@@ -48,9 +48,6 @@ type PageState = {
 type ParsedEdit = Omit<PageState, 'edits' | 'cooldownUntil'> & TrackedEdit;
 
 const TRACKED_TYPES: ReadonlySet<string> = new Set(['edit', 'new']);
-
-/** Same as the key the burst is published under */
-export const pageKey = (wiki: string, title: string) => `${wiki}:${title}`;
 
 /**
  * Finds pages edited by at least `minAuthors` distinct humans within `windowMs`.

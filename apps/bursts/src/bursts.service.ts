@@ -12,8 +12,9 @@ import {
   WIKI_BURSTS_PARTITIONS,
   WIKI_BURSTS_TOPIC,
   WIKI_CHANGES_TOPIC,
+  pageKey,
 } from '@app/kafka';
-import { BurstDetector, pageKey } from './burst-detector.js';
+import { BurstDetector } from './burst-detector.js';
 import { BURSTS_CONFIG, type BurstsConfig } from './bursts.config.js';
 
 const STATS_INTERVAL_MS = 60_000;
@@ -48,8 +49,8 @@ export class BurstsService implements OnModuleInit, OnModuleDestroy {
       numPartitions: WIKI_BURSTS_PARTITIONS,
     });
 
-    // wiki.changes is keyless, so one page's edits are spread over every
-    // partition: run a single instance, or a page's state gets split between members.
+    // wiki.changes is keyed by page, so each page's edits stay on one partition
+    // and its state on one member: several instances work, up to the partition count.
     // Auto-commit: the detector's state lives in memory and is lost on restart
     // anyway, so committing only after processing would protect nothing.
     // Live only: replaying the topic would emit days of old bursts.

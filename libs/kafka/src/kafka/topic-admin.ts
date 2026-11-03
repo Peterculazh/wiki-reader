@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { KafkaJS } from '@confluentinc/kafka-javascript';
-import { TopicAdmin } from '../ports.js';
+import { EnsureTopicOptions, TopicAdmin } from '../ports.js';
 import { KAFKA_CLIENT } from './client.js';
 
 @Injectable()
@@ -11,13 +11,24 @@ export class KafkaTopicAdmin extends TopicAdmin {
 
   async ensureTopic(
     topic: string,
-    { numPartitions }: { numPartitions: number },
+    { numPartitions, configs = {} }: EnsureTopicOptions,
   ): Promise<void> {
     const admin = this.kafka.admin();
     try {
       await admin.connect();
       // Resolves false instead of throwing when the topic already exists
-      await admin.createTopics({ topics: [{ topic, numPartitions }] });
+      await admin.createTopics({
+        topics: [
+          {
+            topic,
+            numPartitions,
+            configEntries: Object.entries(configs).map(([name, value]) => ({
+              name,
+              value,
+            })),
+          },
+        ],
+      });
     } finally {
       await admin.disconnect();
     }
