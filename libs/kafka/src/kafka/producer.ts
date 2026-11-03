@@ -17,7 +17,9 @@ export class KafkaMessageProducer
 
   constructor(@Inject(KAFKA_CLIENT) kafka: KafkaJS.Kafka) {
     super();
-    this.producer = kafka.producer();
+    this.producer = kafka.producer({
+      kafkaJS: { acks: -1, idempotent: true },
+    });
   }
 
   async onModuleInit() {
