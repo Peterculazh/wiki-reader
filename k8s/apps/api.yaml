@@ -1,0 +1,89 @@
+# Serves wiki.changes and wiki.bursts to the dashboard over HTTP: GET /live
+# (server-sent events), GET /bursts, GET /stats. See README, "API".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  # More replicas would work: each pod reads both topics in full, with consumer
+  # groups of its own. But each pod also counts its own stats from the moment it
+  # started, so behind one Service, consecutive requests could show different
+  # numbers. One pod until that matters.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      # Shutdown ends every open stream first (browsers reconnect on their own),
+      # then the consumers leave their groups. Nothing to flush.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: wiki-reader:dev
+          # Image loaded with `kind load docker-image`, see ingester.yaml
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/apps/api/main.js"]
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: wiki-reader-config
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            # Room for librdkafka's prefetch queues (two consumers), plus an
+            # hour of per-minute counters and the open streams' buffers
+            limits:
+              memory: 384Mi
+              cpu: 500m
+          startupProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # Unlike the other apps, this one gets traffic through its Service.
+          # Nest starts listening only once both subscriptions run, so answering
+          # here already means "ready to serve".
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Inside the cluster: web's server components call http://api:3000. From the
+# browser, through a port-forward: see README, "Open the dashboard".
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -8,6 +8,15 @@
     "tsConfigPath": "apps/ingester/tsconfig.app.json"
   },
   "projects": {
+    "api": {
+      "type": "application",
+      "root": "apps/api",
+      "entryFile": "main",
+      "sourceRoot": "apps/api/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/api/tsconfig.app.json"
+      }
+    },
     "archiver": {
       "type": "application",
       "root": "apps/archiver",
@@ -60,6 +69,15 @@
       "sourceRoot": "libs/storage/src",
       "compilerOptions": {
         "tsConfigPath": "libs/storage/tsconfig.lib.json"
+      }
+    },
+    "contracts": {
+      "type": "library",
+      "root": "libs/contracts",
+      "entryFile": "index",
+      "sourceRoot": "libs/contracts/src",
+      "compilerOptions": {
+        "tsConfigPath": "libs/contracts/tsconfig.lib.json"
       }
     }
   },

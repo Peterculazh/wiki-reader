@@ -8,5 +8,6 @@
     "apps/**/*.e2e-spec.ts",
     "libs/**/*.spec.ts",
     "libs/**/*.e2e-spec.ts"
-  ]
+  ],
+  "exclude": ["apps/web"]
 }

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
@@ -14,5 +14,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    // A separate project with its own toolchain; its tests aren't Nest tests
+    exclude: [...configDefaults.exclude, 'apps/web/**'],
   },
 });

@@ -45,6 +45,9 @@
       ],
       "@app/health/*": [
         "./libs/health/src/*"
+      ],
+      "@app/contracts": [
+        "./libs/contracts/src/index.ts"
       ]
     }
   },
@@ -58,6 +61,9 @@
     },
     {
       "path": "./apps/bursts/tsconfig.app.json"
+    },
+    {
+      "path": "./apps/api/tsconfig.app.json"
     },
     {
       "path": "./tsconfig.spec.json"

@@ -13,6 +13,7 @@ CLUSTER=wiki
 STRIMZI_VERSION=1.3.0
 KEDA_VERSION=2.21.0
 IMAGE=wiki-reader:dev
+WEB_IMAGE=wiki-web:dev
 
 step() { printf '\n==> %s\n' "$*"; }
 
@@ -57,11 +58,22 @@ docker run --rm "$IMAGE" node --input-type=module \
 # Copies the image into every kind node; there is no registry
 kind load docker-image "$IMAGE" --name "$CLUSTER"
 
+step "Dashboard image $WEB_IMAGE"
+# From the repo root: next build type-checks libs/contracts
+docker build -f apps/web/Dockerfile -t "$WEB_IMAGE" .
+kind load docker-image "$WEB_IMAGE" --name "$CLUSTER"
+
 step "Apps"
 kubectl apply -k k8s/apps
-for app in ingester archiver bursts; do
+for app in ingester archiver bursts api web; do
   kubectl -n wiki rollout status "deploy/$app" --timeout=5m
 done
 
 step "Done"
 kubectl -n wiki get pods -o wide
+cat <<'EOF'
+
+Dashboard: run these two in separate terminals, then open http://localhost:3000
+  kubectl -n wiki port-forward svc/web 3000:3000
+  kubectl -n wiki port-forward svc/api 3004:3000
+EOF

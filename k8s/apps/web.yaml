@@ -1,0 +1,97 @@
+# The Next.js dashboard (apps/web), its own image: wiki-web:dev, built from
+# apps/web/Dockerfile. Server components fetch the first snapshot from the api
+# Service; the browser opens GET /live itself, see README, "Open the dashboard".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  # Stateless: everything comes from the api, so any number of replicas works
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: wiki-web:dev
+          # Loaded with `kind load docker-image`, like the Nest apps' image
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            # Next's server.js listens on $HOSTNAME. Kubernetes sets HOSTNAME to
+            # the pod's name, which resolves to the pod's IP, so the server would
+            # listen on that address only. kubectl port-forward connects to
+            # localhost inside the pod and would be refused. An explicit value
+            # here wins over Kubernetes' own.
+            - name: HOSTNAME
+              value: "0.0.0.0"
+          # API_URL: where server components reach the api
+          envFrom:
+            - configMapRef:
+                name: wiki-reader-config
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          # /healthz doesn't call the api: an api outage must not restart these
+          # pods or take them out of the Service
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Next writes its runtime cache here (optimized images, fetched data);
+          # the rest stays read-only. A later EROFS error in the logs means Next
+          # wants to write somewhere else too: mount another emptyDir there.
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

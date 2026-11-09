@@ -1,9 +1,14 @@
-# Built inside the image; the host's copies are for Windows anyway
+# Built inside the image; the host's copies are for Windows anyway. The **/
+# forms also match apps/web, which has its own node_modules and .next: a plain
+# `node_modules` only matches at the root of the build context.
 node_modules
+**/node_modules
 dist
+**/.next
 # Secrets and local state
 .env
 **/.env
+**/.env*.local
 .git
 coverage
 # Not needed to build the apps

@@ -1,6 +1,7 @@
-# Environment for all three apps (each reads only what it needs). Loaded with
-# envFrom, so these are real environment variables: they win over any .env file
-# (there is none in the image), and the archiver's import-time process.env reads see them.
+# Environment for all the apps, web included (each reads only what it needs).
+# Loaded with envFrom, so these are real environment variables: they win over any
+# .env file (there is none in the image), and the archiver's import-time
+# process.env reads see them.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,6 +20,13 @@ data:
   BURST_COOLDOWN_MS: "3600000"
   BURST_MAX_LAG_MS: "900000"
   BURST_EVICT_INTERVAL_MS: "60000"
+  # api: the origin the browser shows the dashboard at, allowed to open GET /live.
+  # That's the web port-forward from the README.
+  WEB_ORIGIN: http://localhost:3000
+  # web: where its server components reach the api, read per request. The
+  # browser's address for the api is baked into the web image instead
+  # (NEXT_PUBLIC_API_URL, see apps/web/Dockerfile).
+  API_URL: http://api:3000
 ---
 # Credentials go in a Secret rather than the ConfigMap, so RBAC can restrict who
 # reads them. Secrets are only base64-encoded, not encrypted; these are the local
