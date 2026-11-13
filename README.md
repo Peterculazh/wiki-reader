@@ -344,6 +344,12 @@ Then open http://localhost:3000. The page comes through the first forward, and w
 bash k8s/down.sh   # = kind delete cluster --name wiki: deletes every node, volume and object
 ```
 
+To only empty the data (Kafka topics, messages and offsets, and the SeaweedFS archive) and keep the cluster, Strimzi, KEDA and the loaded images:
+
+```bash
+bash k8s/clean.sh  # deletes the apps, Kafka, SeaweedFS and their PVCs, then redeploys infra and apps
+```
+
 ### Check that it works
 
 ```bash
