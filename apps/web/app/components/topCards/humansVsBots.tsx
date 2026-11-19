@@ -33,11 +33,11 @@ export function HumansVSBotsCard() {
       </div>
       <div className="flex w-full mb-2">
         <div
-          className="bg-[#5B8DEF] transition-[width] h-[8] rounded-l-md duration-500"
+          className="bg-[#5B8DEF] transition-[width] h-2 rounded-l-md duration-500"
           style={{ width: `${humansPct}%` }}
         />
         <div
-          className="bg-[#F5A524] transition-[width] h-[8] rounded-r-md duration-500"
+          className="bg-[#F5A524] transition-[width] h-2 rounded-r-md duration-500"
           style={{ width: `${botsPct}%` }}
         />
       </div>

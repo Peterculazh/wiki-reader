@@ -9,5 +9,5 @@ resources:
   - archiver.yaml
   - bursts.yaml
   - archiver-scaledobject.yaml
-  - api.yaml
+  - live.yaml
   - web.yaml

@@ -2,7 +2,7 @@ import { type INestApplication, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HealthModule } from '@app/health';
 import { KafkaModule } from '@app/kafka';
-import { API_CONFIG, apiConfigFromEnv, type ApiConfig } from './api.config.js';
+import { LIVE_CONFIG, liveConfigFromEnv, type LiveConfig } from './live.config.js';
 import { LiveController } from './live.controller.js';
 import { LiveFeedService } from './live-feed.service.js';
 
@@ -13,26 +13,26 @@ import { LiveFeedService } from './live-feed.service.js';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        clientId: 'api',
+        clientId: 'live',
         brokers: config.getOrThrow<string>('KAFKA_BROKERS').split(','),
       }),
     }),
     ConfigModule.forRoot({
-      envFilePath: ['apps/api/.env', '.env'],
+      envFilePath: ['apps/live/.env', '.env'],
     }),
   ],
   controllers: [LiveController],
   providers: [
-    { provide: API_CONFIG, useFactory: () => apiConfigFromEnv() },
+    { provide: LIVE_CONFIG, useFactory: () => liveConfigFromEnv() },
     LiveFeedService,
   ],
 })
-export class ApiModule {}
+export class LiveModule {}
 
 /** HTTP setup shared by main.ts and the tests */
-export function configureApi(app: INestApplication) {
+export function configureLive(app: INestApplication) {
   // The browser opens GET /live itself, from the dashboard's origin, so the
-  // stream needs CORS. Server components call the api server to server and don't.
-  app.enableCors({ origin: app.get<ApiConfig>(API_CONFIG).webOrigins });
+  // stream needs CORS. Server components call the live app server to server and don't.
+  app.enableCors({ origin: app.get<LiveConfig>(LIVE_CONFIG).webOrigins });
   return app;
 }

@@ -3,7 +3,7 @@
   "compilerOptions": {
     "declaration": false,
     "rootDir": "../..",
-    "outDir": "../../dist/apps/api"
+    "outDir": "../../dist/apps/stats"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "test", "**/*spec.ts"]

@@ -1,6 +1,6 @@
 # web
 
-The wiki-reader dashboard: Next.js (App Router) on top of [apps/api](../api).
+The wiki-reader dashboard: Next.js (App Router) on top of [apps/live](../live).
 
 It lives in the repo but outside the Nest monorepo: its own `package.json`, lockfile and `tsconfig.json`, and `nest-cli.json` doesn't list it. The root `package.json` and the Nest apps' Docker image stay free of Next and React, and the two toolchains (Nest: `nodenext` + decorators, built by Rspack; Next: `bundler` resolution + JSX, built by Turbopack) don't have to share one config.
 
@@ -12,14 +12,14 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-The api has to run too: `npm run start:dev -- api` in the repo root (port 3004, see `apps/api/.env.example`), next to the ingester and bursts.
+The live app has to run too: `npm run start:dev -- live` in the repo root (port 3004, see `apps/live/.env.example`), next to the ingester and bursts.
 
-## Talking to the api
+## Talking to the live app
 
 | What | Where it runs | Base URL |
 |---|---|---|
-| First render: `GET /stats`, `GET /bursts` | Server Components | `API_URL`, read per request |
-| Live updates: `GET /live` (server-sent events) | `EventSource` in a Client Component | `NEXT_PUBLIC_API_URL`, inlined at build time |
+| First render: `GET /stats`, `GET /bursts` | Server Components | `LIVE_URL`, read per request |
+| Live updates: `GET /live` (server-sent events) | `EventSource` in a Client Component | `NEXT_PUBLIC_LIVE_URL`, inlined at build time |
 
 The response types come from [libs/contracts](../../libs/contracts/src/index.ts):
 
@@ -33,7 +33,7 @@ On the stream, each event's name is a key of `LiveStreamEvents`: `source.addEven
 
 ## Cache Components
 
-`cacheComponents` is on (the create-next-app default since 16.4). A `fetch` without `"use cache"` runs on every request, and it has to sit inside a `<Suspense>` boundary: otherwise `next build` stops with "uncached or runtime data during prerendering". Don't put `"use cache"` on api calls either. A cached call runs during `next build`, and inside `docker build` there's no api to answer it.
+`cacheComponents` is on (the create-next-app default since 16.4). A `fetch` without `"use cache"` runs on every request, and it has to sit inside a `<Suspense>` boundary: otherwise `next build` stops with "uncached or runtime data during prerendering". Don't put `"use cache"` on calls to the live app either. A cached call runs during `next build`, and inside `docker build` there's no live app to answer it.
 
 ## Production
 

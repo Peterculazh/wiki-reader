@@ -4,6 +4,7 @@ import { BurstsSizeCard } from './topCards/burstsSize';
 import { BusiestWikipediaCard } from './topCards/busiestWiki';
 import { EditsPerMinuteCard } from './topCards/editsInMin';
 import { HumansVSBotsCard } from './topCards/humansVsBots';
+import { LiveEditsCard } from './liveEdits';
 
 export function Body() {
   return (
@@ -16,7 +17,11 @@ export function Body() {
       </div>
       <div className="grid w-full gap-4 xl:grid-cols-3">
         <EditsPerMinuteChart />
-        <BurstsCard/>
+        <BurstsCard />
+      </div>
+      <div className="grid w-full gap-4 xl:grid-cols-3 mt-5">
+        <LiveEditsCard />
+        {/* права колонка: Top articles і Top wikis — пізніше */}
       </div>
     </div>
   );

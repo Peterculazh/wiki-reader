@@ -7,7 +7,7 @@ Wikimedia EventStreams ──► ingester ──► Kafka: wiki.changes ──�
                               │                               │
                               │                               ├──► bursts ──► Kafka: wiki.bursts
                               │                               │                     │
-                              │                               └──► api ◄────────────┘
+                              │                               └──► live ◄───────────┘
                               │                                     │ GET /live (SSE), /bursts, /stats
                               │                                     ▼
                               │                                    web (Next.js dashboard)
@@ -24,17 +24,17 @@ NestJS monorepo ([nest-cli.json](nest-cli.json)):
 | [apps/ingester](apps/ingester)   | Reads the [recentchange](https://stream.wikimedia.org/v2/stream/recentchange) server-sent events (SSE) stream and publishes every event to `wiki.changes`, keyed by `<wiki>:<title>`. About once a minute it saves the last event ID to the compacted topic `wiki.changes.latest`, so after a restart it resumes where it left off. |
 | [apps/archiver](apps/archiver)   | Consumes `wiki.changes` and writes each partition's messages to S3 as gzipped NDJSON chunks.                                                                                                                                                                                                                                        |
 | [apps/bursts](apps/bursts)       | Consumes `wiki.changes` and publishes one event to `wiki.bursts` whenever a page is suddenly edited by many different people.                                                                                                                                                                                                       |
-| [apps/api](apps/api)             | Serves both topics to the dashboard over HTTP: `GET /live` streams new edits, new bursts and rolling stats as server-sent events, `GET /bursts` and `GET /stats` return the current state. See [API](#api).                                                                                                                         |
+| [apps/live](apps/live)           | Serves both topics to the dashboard over HTTP: `GET /live` streams new edits, new bursts and rolling stats as server-sent events, `GET /bursts` and `GET /stats` return the current state. See [Live](#live).                                                                                                                       |
 | [libs/kafka](libs/kafka)         | Kafka ports (`MessageProducer`, `MessageConsumerFactory`, `CompactedTopicReader`), a Confluent client implementation and an in-memory fake for tests.                                                                                                                                                                               |
 | [libs/storage](libs/storage)     | `ObjectStorage` port, an S3 implementation (AWS SDK v3) and an in-memory fake for tests.                                                                                                                                                                                                                                            |
 | [libs/health](libs/health)       | `GET /health/live` and `GET /health/ready` ([@nestjs/terminus](https://docs.nestjs.com/recipes/terminus)), used by the Kubernetes probes. Readiness equals liveness on purpose; see the comment in [health.controller.ts](libs/health/src/health.controller.ts).                                                                    |
-| [libs/contracts](libs/contracts) | The types of what the api returns: `LiveEdit`, `StatsSnapshot`, `LiveStreamEvents`, and `BurstEvent` from libs/kafka. Types only, since the dashboard imports them too.                                                                                                                                                             |
+| [libs/contracts](libs/contracts) | The types of what the live app returns: `LiveEdit`, `StatsSnapshot`, `LiveStreamEvents`, and `BurstEvent` from libs/kafka. Types only, since the dashboard imports them too.                                                                                                                                                        |
 
 Next to it, outside the Nest monorepo:
 
-| Path                 | What it does                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------- |
-| [apps/web](apps/web) | The dashboard: Next.js on top of the api. A separate npm project, see [Web](#web). |
+| Path                 | What it does                                                                            |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| [apps/web](apps/web) | The dashboard: Next.js on top of the live app. A separate npm project, see [Web](#web). |
 
 ### How the archiver writes chunks
 
@@ -59,9 +59,9 @@ When something happens in the world, the Wikipedia article about it is edited by
 
 To check it, run `npm run start:dev -- bursts` next to the ingester, then open Kafka UI → Topics → `wiki.bursts` → Messages. A burst usually shows up within a few minutes on a busy day; set `BURST_MIN_AUTHORS=2` to see some sooner. The app logs each burst and, once a minute, how many events it saw and accepted, how many pages it tracks, and how many bursts it emitted or skipped as stale. Use those numbers to tune `BURST_MIN_AUTHORS`.
 
-### API
+### Live
 
-The api turns the two topics into something a browser can use. Its response types are in [libs/contracts](libs/contracts/src/index.ts).
+The live app turns the two topics into something a browser can use. Its response types are in [libs/contracts](libs/contracts/src/index.ts).
 
 | Endpoint               | Returns                                                                                                                                                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -69,26 +69,26 @@ The api turns the two topics into something a browser can use. Its response type
 | `GET /bursts?limit=50` | The latest bursts, newest first; `limit` goes up to 100                                                                                                                                                                                                      |
 | `GET /stats`           | The same snapshot as the `stats` event                                                                                                                                                                                                                       |
 
-- **Edits:** every `edit` and `new` event on `wiki.changes` (no log entries, categorization or canary events), trimmed to a `LiveEdit`. It leaves out `parsedcomment`, so the api never hands the browser HTML. Live only: the api starts at the end of the topic, like bursts.
-- **Batches:** about 30 events a second reach the api, so a stream sends them every 500 ms in one array: one React state update instead of fifteen.
+- **Edits:** every `edit` and `new` event on `wiki.changes` (no log entries, categorization or canary events), trimmed to a `LiveEdit`. It leaves out `parsedcomment`, so the live app never hands the browser HTML. Live only: the live app starts at the end of the topic, like bursts.
+- **Batches:** about 30 events a second reach the live app, so a stream sends them every 500 ms in one array: one React state update instead of fifteen.
 - **Stats:** humans and bots per minute over the last 60 minutes, the 10 busiest wikis (all edits) and the 10 busiest articles (human edits in namespace 0, as bursts counts them). An edit counts in the minute of its own time, so the ingester's replay after a restart fills in the minutes it missed. The window ends at the wall clock's current minute, so when the stream stops, the chart drops to zero instead of freezing. In memory only, see [Known issues](#known-issues).
-- **Bursts:** read from the beginning of `wiki.bursts` on every start, so the list survives an api restart (as far back as the topic's retention, 7 days by default). The latest 100 are kept, each `burstId` once.
-- **Fresh consumer groups on every start, never committed:** `api-edits-<host>-<random>` and `api-bursts-<host>-<random>`. This is fan-out, not shared work. Each instance serves its own browsers, so each must see every message; instances sharing a group would split the partitions between them, and every browser would get only part of the stream. Nothing resumes from these groups, so committing would only leave offsets behind. Like the ingester's `ingester-compacted-reader-*` groups, they show up in Kafka UI while the api runs.
-- **CORS:** the browser opens `GET /live` itself, from the dashboard's origin, so the api allows `WEB_ORIGIN`. The dashboard's server components call the api server to server and don't need it.
+- **Bursts:** read from the beginning of `wiki.bursts` on every start, so the list survives a restart of the live app (as far back as the topic's retention, 7 days by default). The latest 100 are kept, each `burstId` once.
+- **Fresh consumer groups on every start, never committed:** `live-edits-<host>-<random>` and `live-bursts-<host>-<random>`. This is fan-out, not shared work. Each instance serves its own browsers, so each must see every message; instances sharing a group would split the partitions between them, and every browser would get only part of the stream. Nothing resumes from these groups, so committing would only leave offsets behind. Like the ingester's `ingester-compacted-reader-*` groups, they show up in Kafka UI while the live app runs.
+- **CORS:** the browser opens `GET /live` itself, from the dashboard's origin, so the live app allows `WEB_ORIGIN`. The dashboard's server components call the live app server to server and don't need it.
 - **Shutdown** ends every open stream before the HTTP server closes, so it doesn't wait for browsers to hang up. `EventSource` reconnects on its own.
 
 To watch the raw stream without the dashboard: `curl -N localhost:3004/live`.
 
 ### Web
 
-[apps/web](apps/web) is the dashboard: Next.js 16 (App Router, Turbopack) on top of the api. It's in this repo but outside the Nest monorepo, on purpose:
+[apps/web](apps/web) is the dashboard: Next.js 16 (App Router, Turbopack) on top of the live app. It's in this repo but outside the Nest monorepo, on purpose:
 
 - **Its own `package.json` and lockfile.** The root `package.json` feeds the Nest apps' one Docker image, which copies all of `node_modules`. With Next and React in it, all four Nest apps would ship them.
 - **Its own `tsconfig.json`, not extending the root one.** The Nest side compiles with `nodenext` and legacy decorators; Next wants `bundler` resolution and JSX.
 - **Not in `nest-cli.json`.** Nest CLI builds only the projects listed there, so it never sees apps/web. The root Vitest configs, `tsconfig.spec.json` and `npm run format` skip it too.
 - **Only types cross over.** apps/web maps `@contracts` to libs/contracts and imports it with `import type`, which the compiler erases. `turbopack.root` in its `next.config.ts` pins Turbopack to apps/web: a value import from outside fails to resolve instead of pulling Nest code into the bundle. Without it, Next would take the topmost lockfile's folder, the repo root, as the root, and warn about it.
 
-The first render comes from server components calling `API_URL`; live updates come from an `EventSource` on `NEXT_PUBLIC_API_URL`. More in [apps/web/README.md](apps/web/README.md).
+The first render comes from server components calling `LIVE_URL`; live updates come from an `EventSource` on `NEXT_PUBLIC_LIVE_URL`. More in [apps/web/README.md](apps/web/README.md).
 
 ## Prerequisites
 
@@ -102,14 +102,14 @@ For the Kubernetes setup (kind, kubectl, Helm) see [Kubernetes](#kubernetes).
 ```bash
 npm install
 
-# 3 Kafka brokers, Kafka UI, SeaweedFS (S3), SeaweedFS admin UI
+# 3 Kafka brokers, Kafka UI, SeaweedFS (S3), SeaweedFS admin UI, Postgres
 docker compose up -d
 
 # In separate terminals
 npm run start:dev -- ingester
 npm run start:dev -- archiver
 npm run start:dev -- bursts
-npm run start:dev -- api
+npm run start:dev -- live
 
 # The dashboard, a separate npm project: http://localhost:3000
 cd apps/web && npm install && npm run dev
@@ -121,13 +121,15 @@ Before the first start, create the env files (they are git-ignored, see [Configu
 # .env: shared by every Nest app
 KAFKA_BROKERS=localhost:9092,localhost:9094,localhost:9096
 
-# apps/ingester/.env, apps/archiver/.env, apps/bursts/.env, apps/api/.env: one port per app
+# apps/ingester/.env, apps/archiver/.env, apps/bursts/.env, apps/live/.env: one port per app
 PORT=3001   # 3002, 3003, 3004
 ```
 
-The dashboard reads Next's own env files instead: copy [apps/web/.env.example](apps/web/.env.example) to `apps/web/.env.local`. It points at the api on port 3004.
+The dashboard reads Next's own env files instead: copy [apps/web/.env.example](apps/web/.env.example) to `apps/web/.env.local`. It points at the live app on port 3004.
 
-If you ran the project when Compose still had a `postgres` service, run `docker compose up -d --remove-orphans` once to remove its container (nothing used it). The same goes for the old single `broker` service: its container can keep host port `9092` reserved, and `kafka-1` then starts without a network.
+If you ran the project when Compose had a single `broker` service, run `docker compose up -d --remove-orphans` once to remove its container: it can keep host port `9092` reserved, and `kafka-1` then starts without a network.
+
+Postgres listens on `localhost:5432`, user, password and database all `wiki` (`postgres://wiki:wiki@localhost:5432/wiki`). No app uses it yet; it's for the planned reports, see [Reports: design](#reports-design). Its data lives in the `postgres-data` volume, so it survives `docker compose down` but not `down -v`.
 
 ## Configuration
 
@@ -137,27 +139,27 @@ Each Nest app loads env files with [`@nestjs/config`](https://docs.nestjs.com/te
 
 The other settings have local defaults that match [docker-compose.yml](docker-compose.yml):
 
-| Variable                                   | Used by                         | Purpose                                                                                                                                                                                       |
-| ------------------------------------------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KAFKA_BROKERS`                            | ingester, archiver, bursts, api | Comma-separated broker list. Required.                                                                                                                                                        |
-| `S3_ENDPOINT`                              | archiver                        | S3-compatible endpoint. Leave it unset to use AWS.                                                                                                                                            |
-| `S3_REGION`                                | archiver                        | Bucket region                                                                                                                                                                                 |
-| `S3_BUCKET`                                | archiver                        | Target bucket                                                                                                                                                                                 |
-| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | archiver                        | S3 credentials. The local SeaweedFS identity is defined in [seaweedfs/s3.json](seaweedfs/s3.json).                                                                                            |
-| `S3_CREATE_BUCKET`                         | archiver                        | Set to `false` to skip creating the bucket on startup (meant for local dev only)                                                                                                              |
-| `BURST_WINDOW_MS`                          | bursts                          | Sliding window in event time (default `600000`, 10 min)                                                                                                                                       |
-| `BURST_MIN_AUTHORS`                        | bursts                          | Distinct human users within the window that make a burst (default `3`)                                                                                                                        |
-| `BURST_COOLDOWN_MS`                        | bursts                          | How long a page stays muted after a burst, in event time (default `3600000`, 1 h)                                                                                                             |
-| `BURST_MAX_LAG_MS`                         | bursts                          | Skip bursts whose last edit is older than this by the wall clock, e.g. while catching up (default `900000`, 15 min)                                                                           |
-| `BURST_EVICT_INTERVAL_MS`                  | bursts                          | How often idle pages are dropped from memory (default `60000`)                                                                                                                                |
-| `PORT`                                     | ingester, archiver, bursts, api | HTTP port (default `3000`). Set a different one per app to run them side by side.                                                                                                             |
-| `WEB_ORIGIN`                               | api                             | Origins allowed to open `GET /live` from a browser, comma-separated (default `http://localhost:3000`)                                                                                         |
-| `API_URL`                                  | web                             | Where the dashboard's server components reach the api, read per request: `http://localhost:3004` locally, `http://api:3000` in Kubernetes                                                     |
-| `NEXT_PUBLIC_API_URL`                      | web                             | Where the browser reaches the api. Next inlines it into the JavaScript at build time, so in Docker it's a build argument of [apps/web/Dockerfile](apps/web/Dockerfile), not a runtime setting |
+| Variable                                   | Used by                          | Purpose                                                                                                                                                                                            |
+| ------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KAFKA_BROKERS`                            | ingester, archiver, bursts, live | Comma-separated broker list. Required.                                                                                                                                                             |
+| `S3_ENDPOINT`                              | archiver                         | S3-compatible endpoint. Leave it unset to use AWS.                                                                                                                                                 |
+| `S3_REGION`                                | archiver                         | Bucket region                                                                                                                                                                                      |
+| `S3_BUCKET`                                | archiver                         | Target bucket                                                                                                                                                                                      |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | archiver                         | S3 credentials. The local SeaweedFS identity is defined in [seaweedfs/s3.json](seaweedfs/s3.json).                                                                                                 |
+| `S3_CREATE_BUCKET`                         | archiver                         | Set to `false` to skip creating the bucket on startup (meant for local dev only)                                                                                                                   |
+| `BURST_WINDOW_MS`                          | bursts                           | Sliding window in event time (default `600000`, 10 min)                                                                                                                                            |
+| `BURST_MIN_AUTHORS`                        | bursts                           | Distinct human users within the window that make a burst (default `3`)                                                                                                                             |
+| `BURST_COOLDOWN_MS`                        | bursts                           | How long a page stays muted after a burst, in event time (default `3600000`, 1 h)                                                                                                                  |
+| `BURST_MAX_LAG_MS`                         | bursts                           | Skip bursts whose last edit is older than this by the wall clock, e.g. while catching up (default `900000`, 15 min)                                                                                |
+| `BURST_EVICT_INTERVAL_MS`                  | bursts                           | How often idle pages are dropped from memory (default `60000`)                                                                                                                                     |
+| `PORT`                                     | ingester, archiver, bursts, live | HTTP port (default `3000`). Set a different one per app to run them side by side.                                                                                                                  |
+| `WEB_ORIGIN`                               | live                             | Origins allowed to open `GET /live` from a browser, comma-separated (default `http://localhost:3000`)                                                                                              |
+| `LIVE_URL`                                 | web                              | Where the dashboard's server components reach the live app, read per request: `http://localhost:3004` locally, `http://live:3000` in Kubernetes                                                    |
+| `NEXT_PUBLIC_LIVE_URL`                     | web                              | Where the browser reaches the live app. Next inlines it into the JavaScript at build time, so in Docker it's a build argument of [apps/web/Dockerfile](apps/web/Dockerfile), not a runtime setting |
 
 The archiver reads the `S3_*` variables before the env files are loaded, so for now set them in the real environment, not in `.env` (see [Known issues](#known-issues)).
 
-Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_ADMIN_PORT`.
+Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT`, `SEAWEEDFS_ADMIN_PORT`, `POSTGRES_PORT`. So can the Postgres credentials: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` (they only take effect when the `postgres-data` volume is empty: Postgres creates the user and database on first start only).
 
 ## Local services
 
@@ -169,7 +171,7 @@ Port mappings in Compose can be overridden too: `S3_PORT`, `SEAWEEDFS_FILER_PORT
 | SeaweedFS filer                       | http://localhost:8888/buckets/wiki-archive/          | Browse archived objects in the browser                                                                           |
 | SeaweedFS admin                       | http://localhost:23646                               | Manage buckets and S3 users, and see cluster status ([docker-compose.override.yml](docker-compose.override.yml)) |
 | Dashboard (`npm run dev` in apps/web) | http://localhost:3000                                | Watch edits, bursts and stats live                                                                               |
-| api                                   | http://localhost:3004                                | `curl -N localhost:3004/live` for the raw stream, `/bursts` and `/stats` for JSON                                |
+| live                                  | http://localhost:3004                                | `curl -N localhost:3004/live` for the raw stream, `/bursts` and `/stats` for JSON                                |
 
 ### Inspecting the archive
 
@@ -254,18 +256,18 @@ kind cluster "wiki": 1 control-plane + 3 workers (Docker containers)
     ├── Kafka "wiki": 3 KRaft nodes (controller + broker), one per worker, PVC each
     ├── KafkaTopics: wiki.changes (3), wiki.changes.latest (1, compacted), wiki.bursts (6)
     ├── Kafbat UI, SeaweedFS (S3)                                      k8s/infra
-    └── ingester, archiver (+ ScaledObject), bursts, api, web          k8s/apps
+    └── ingester, archiver (+ ScaledObject), bursts, live, web          k8s/apps
 ```
 
-| Path                                               | What it is                                                                                                               |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| [k8s/kind-config.yaml](k8s/kind-config.yaml)       | The cluster: one control-plane node and three workers, pinned node image                                                 |
-| [k8s/namespace.yaml](k8s/namespace.yaml)           | Namespace `wiki`, created before Strimzi (its chart sets up permissions there)                                           |
-| [k8s/infra/](k8s/infra)                            | Kustomization: `Kafka` + `KafkaNodePool`, `KafkaTopic`s, Kafbat UI, SeaweedFS                                            |
-| [k8s/apps/](k8s/apps)                              | Kustomization: ConfigMap + Secret, the five Deployments (api and web with a Service each), the archiver's `ScaledObject` |
-| [Dockerfile](Dockerfile)                           | One image, `wiki-reader:dev`, with all four Nest apps; each Deployment runs `node dist/apps/<app>/main.js`               |
-| [apps/web/Dockerfile](apps/web/Dockerfile)         | The dashboard's image, `wiki-web:dev`, built from the repo root                                                          |
-| [k8s/up.sh](k8s/up.sh), [k8s/down.sh](k8s/down.sh) | The setup and teardown steps below, as scripts                                                                           |
+| Path                                               | What it is                                                                                                                |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [k8s/kind-config.yaml](k8s/kind-config.yaml)       | The cluster: one control-plane node and three workers, pinned node image                                                  |
+| [k8s/namespace.yaml](k8s/namespace.yaml)           | Namespace `wiki`, created before Strimzi (its chart sets up permissions there)                                            |
+| [k8s/infra/](k8s/infra)                            | Kustomization: `Kafka` + `KafkaNodePool`, `KafkaTopic`s, Kafbat UI, SeaweedFS                                             |
+| [k8s/apps/](k8s/apps)                              | Kustomization: ConfigMap + Secret, the five Deployments (live and web with a Service each), the archiver's `ScaledObject` |
+| [Dockerfile](Dockerfile)                           | One image, `wiki-reader:dev`, with all four Nest apps; each Deployment runs `node dist/apps/<app>/main.js`                |
+| [apps/web/Dockerfile](apps/web/Dockerfile)         | The dashboard's image, `wiki-web:dev`, built from the repo root                                                           |
+| [k8s/up.sh](k8s/up.sh), [k8s/down.sh](k8s/down.sh) | The setup and teardown steps below, as scripts                                                                            |
 
 ### Prerequisites
 
@@ -321,7 +323,7 @@ kubectl apply -k k8s/apps
 kubectl -n wiki rollout status deploy/ingester
 kubectl -n wiki rollout status deploy/archiver
 kubectl -n wiki rollout status deploy/bursts
-kubectl -n wiki rollout status deploy/api
+kubectl -n wiki rollout status deploy/live
 kubectl -n wiki rollout status deploy/web
 ```
 
@@ -333,10 +335,10 @@ Neither Service is exposed outside the cluster, so forward both, each in its own
 
 ```bash
 kubectl -n wiki port-forward svc/web 3000:3000
-kubectl -n wiki port-forward svc/api 3004:3000
+kubectl -n wiki port-forward svc/live 3004:3000
 ```
 
-Then open http://localhost:3000. The page comes through the first forward, and web's server components reach the api inside the cluster (`API_URL=http://api:3000`). The live stream comes through the second: the browser connects to `http://localhost:3004`, the address built into the web image (`NEXT_PUBLIC_API_URL`), and the api accepts the `http://localhost:3000` origin (`WEB_ORIGIN`). Other local ports mean changing both: `WEB_ORIGIN` in [k8s/apps/config.yaml](k8s/apps/config.yaml) plus an api restart, and a rebuild of the web image with `--build-arg NEXT_PUBLIC_API_URL=...`.
+Then open http://localhost:3000. The page comes through the first forward, and web's server components reach the live app inside the cluster (`LIVE_URL=http://live:3000`). The live stream comes through the second: the browser connects to `http://localhost:3004`, the address built into the web image (`NEXT_PUBLIC_LIVE_URL`), and the live app accepts the `http://localhost:3000` origin (`WEB_ORIGIN`). Other local ports mean changing both: `WEB_ORIGIN` in [k8s/apps/config.yaml](k8s/apps/config.yaml) plus a restart of the live app, and a rebuild of the web image with `--build-arg NEXT_PUBLIC_LIVE_URL=...`.
 
 ### Teardown
 
@@ -379,7 +381,7 @@ kubectl -n wiki exec wiki-dual-role-0 -- bin/kafka-console-consumer.sh --bootstr
   --topic wiki.bursts --from-beginning --max-messages 1 --formatter-property print.key=true
 ```
 
-**Kafbat UI:** `kubectl -n wiki port-forward svc/kafbat-ui 8080:8080`, then open http://localhost:8080. If Compose's Kafbat already uses 8080, pick another local port, e.g. `18080:8080`. Under Consumers you'll see `archiver`, `bursts`, short-lived `ingester-compacted-reader-*` groups (the ingester reads its stored position with a throwaway group on every start) and the api's `api-edits-*` and `api-bursts-*` groups, new ones on every api start (see [API](#api)).
+**Kafbat UI:** `kubectl -n wiki port-forward svc/kafbat-ui 8080:8080`, then open http://localhost:8080. If Compose's Kafbat already uses 8080, pick another local port, e.g. `18080:8080`. Under Consumers you'll see `archiver`, `bursts`, short-lived `ingester-compacted-reader-*` groups (the ingester reads its stored position with a throwaway group on every start) and the live app's `live-edits-*` and `live-bursts-*` groups, new ones on every start of the live app (see [Live](#live)).
 
 To see bursts sooner, set `BURST_MIN_AUTHORS: "2"` in [k8s/apps/config.yaml](k8s/apps/config.yaml), then run `kubectl apply -k k8s/apps` and `kubectl -n wiki rollout restart deploy/bursts`. Pods read env vars only when they start.
 
@@ -530,7 +532,7 @@ What happens, with `strategy: Recreate`:
 
 - **`StorageModule` has no `forRootAsync`.** The archiver reads `S3_*` from `process.env` while modules are imported, before the env files are loaded, so values in `.env` are ignored.
 
-- **The api's stats live in memory.** They start empty on every start, each api pod counts its own, and they count twice whatever arrives twice: after an ingester restart, up to a minute of events is published again (at least once). The live feed has the same repeats, but there each `LiveEdit` carries the event's `id`, so the dashboard can drop them.
+- **The live app's stats are kept in memory.** They start empty on every start, each live pod counts its own, and they count twice whatever arrives twice: after an ingester restart, up to a minute of events is published again (at least once). The live feed has the same repeats, but there each `LiveEdit` carries the event's `id`, so the dashboard can drop them.
 
 ## Tests
 

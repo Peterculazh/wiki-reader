@@ -46,6 +46,16 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --animate-row-flash: row-flash 0.6s ease-in-out;
+
+  @keyframes row-flash {
+    0% {
+      background: #131A29;
+    }
+    100% {
+      background: transparent;
+    }
+  }
 }
 
 :root {
@@ -128,3 +138,4 @@
     @apply font-sans;
   }
 }
+

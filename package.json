@@ -19,7 +19,10 @@
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "migrate:stats": "node-pg-migrate up -m apps/stats/migrations",
+    "migrate:stats:down": "node-pg-migrate down -m apps/stats/migrations",
+    "migrate:stats:create": "node-pg-migrate create -m apps/stats/migrations"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",
@@ -29,7 +32,11 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/platform-express": "^12.0.1",
     "@nestjs/terminus": "^12.1.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
     "eventsource": "^5.1.3",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
@@ -41,8 +48,10 @@
     "@rspack/core": "^2.2.9",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
     "@vitest/coverage-v8": "^4.1.2",
+    "dotenv": "^18.0.10",
     "oxlint": "^1.58.0",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",

@@ -1,4 +1,4 @@
-// What apps/api serves to the dashboard: GET /bursts, GET /stats and the GET /live
+// What apps/live serves to the dashboard: GET /bursts, GET /stats and the GET /live
 // stream. Types only. apps/web imports this file with `import type` from outside
 // its own project, so the compiler erases it from the bundle and nothing here may
 // be a runtime value. For the same reason, import only files that have no imports
@@ -63,7 +63,7 @@ export type StatsSnapshot = {
 export type LiveStreamEvents = {
   /** New edits that match the stream's filters, in batches */
   edits: LiveEdit[];
-  /** A newly detected burst. After an api restart, recent ones arrive again: dedupe by `burstId`. */
+  /** A newly detected burst. After a restart of the live app, recent ones arrive again: dedupe by `burstId`. */
   burst: BurstEvent;
   /** The current stats: once right after connecting, then every few seconds */
   stats: StatsSnapshot;

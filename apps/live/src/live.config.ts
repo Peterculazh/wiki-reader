@@ -1,6 +1,6 @@
-export const API_CONFIG = Symbol('API_CONFIG');
+export const LIVE_CONFIG = Symbol('LIVE_CONFIG');
 
-export type ApiConfig = {
+export type LiveConfig = {
   /** Origins allowed to open GET /live from a browser (CORS) */
   webOrigins: string[];
   /** Edits on GET /live go out in batches this often */
@@ -17,11 +17,11 @@ export type ApiConfig = {
 
 /**
  * Only the origin comes from the environment, since it differs per setup. The
- * rest are fixed: tests swap the whole object through the API_CONFIG provider.
+ * rest are fixed: tests swap the whole object through the LIVE_CONFIG provider.
  */
-export function apiConfigFromEnv(
+export function liveConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
-): ApiConfig {
+): LiveConfig {
   const origins = (env.WEB_ORIGIN ?? '')
     .split(',')
     .map((origin) => origin.trim())

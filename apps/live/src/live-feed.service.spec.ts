@@ -7,14 +7,14 @@ import type {
   LiveStreamEventName,
   LiveStreamEvents,
 } from '@app/contracts';
-import { API_CONFIG, apiConfigFromEnv, type ApiConfig } from './api.config.js';
-import { ApiModule, configureApi } from './api.module.js';
+import { LIVE_CONFIG, liveConfigFromEnv, type LiveConfig } from './live.config.js';
+import { LiveModule, configureLive } from './live.module.js';
 import { LiveController } from './live.controller.js';
 import { type EditFilter, LiveFeedService } from './live-feed.service.js';
 
 // Short intervals, so a test waits milliseconds for a batch instead of seconds
-const config: ApiConfig = {
-  ...apiConfigFromEnv({}),
+const config: LiveConfig = {
+  ...liveConfigFromEnv({}),
   batchMs: 20,
   statsIntervalMs: 50,
 };
@@ -134,13 +134,13 @@ describe('LiveFeedService', () => {
 
   async function start() {
     const moduleRef = await overrideKafka(
-      Test.createTestingModule({ imports: [ApiModule] }),
+      Test.createTestingModule({ imports: [LiveModule] }),
       kafka,
     )
-      .overrideProvider(API_CONFIG)
+      .overrideProvider(LIVE_CONFIG)
       .useValue(config)
       .compile();
-    const app = configureApi(
+    const app = configureLive(
       moduleRef.createNestApplication({ logger: false }),
     );
     apps.push(app);

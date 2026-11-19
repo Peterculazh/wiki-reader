@@ -65,7 +65,7 @@ kind load docker-image "$WEB_IMAGE" --name "$CLUSTER"
 
 step "Apps"
 kubectl apply -k k8s/apps
-for app in ingester archiver bursts api web; do
+for app in ingester archiver bursts live web; do
   kubectl -n wiki rollout status "deploy/$app" --timeout=5m
 done
 
@@ -75,5 +75,5 @@ cat <<'EOF'
 
 Dashboard: run these two in separate terminals, then open http://localhost:3000
   kubectl -n wiki port-forward svc/web 3000:3000
-  kubectl -n wiki port-forward svc/api 3004:3000
+  kubectl -n wiki port-forward svc/live 3004:3000
 EOF

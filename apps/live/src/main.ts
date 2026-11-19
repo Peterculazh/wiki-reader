@@ -1,8 +1,8 @@
 import { NestFactory } from '@nestjs/core';
-import { ApiModule, configureApi } from './api.module.js';
+import { LiveModule, configureLive } from './live.module.js';
 
 async function bootstrap() {
-  const app = configureApi(await NestFactory.create(ApiModule));
+  const app = configureLive(await NestFactory.create(LiveModule));
   app.enableShutdownHooks();
   await app.listen(process.env.PORT ?? 3000);
 }

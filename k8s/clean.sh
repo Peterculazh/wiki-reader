@@ -53,7 +53,7 @@ k rollout status deploy/kafbat-ui --timeout=5m
 
 step "Apps"
 k apply -k k8s/apps
-for app in ingester archiver bursts api web; do
+for app in ingester archiver bursts live web; do
   k rollout status "deploy/$app" --timeout=5m
 done
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { useLive } from '../live-provider';
+import { useLive } from '../../live-provider';
 type LiveBadgeProps = {
   className?: string;
 };
@@ -32,6 +32,7 @@ export function LiveBadge({ className }: LiveBadgeProps) {
       />
       {live && `Live · ${perSecond ?? '…'} edits/s`}
       {status === 'connecting' && 'Connecting…'}
+      {status === 'reconnecting' && 'Reconnecting…'}
       {status === 'offline' && 'Offline'}
     </span>
   );

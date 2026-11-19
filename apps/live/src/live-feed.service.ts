@@ -37,7 +37,7 @@ import type {
   LiveStreamEvents,
   StatsSnapshot,
 } from '@app/contracts';
-import { API_CONFIG, type ApiConfig } from './api.config.js';
+import { LIVE_CONFIG, type LiveConfig } from './live.config.js';
 import { EditStats } from './edit-stats.js';
 import { toLiveEdit } from './live-edit.js';
 import { preview } from './preview.js';
@@ -80,7 +80,7 @@ export class LiveFeedService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly consumers: MessageConsumerFactory,
     private readonly topicAdmin: TopicAdmin,
-    @Inject(API_CONFIG) private readonly config: ApiConfig,
+    @Inject(LIVE_CONFIG) private readonly config: LiveConfig,
   ) {
     this.editStats = new EditStats({
       windowMinutes: config.statsWindowMinutes,
@@ -95,7 +95,7 @@ export class LiveFeedService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     // The ingester and bursts create these too. Creating them here as well, with
-    // the same partition counts, lets the api start before them.
+    // the same partition counts, lets the live app start before them.
     await this.topicAdmin.ensureTopic(WIKI_CHANGES_TOPIC, {
       numPartitions: WIKI_CHANGES_PARTITIONS,
     });
@@ -116,7 +116,7 @@ export class LiveFeedService implements OnModuleInit, OnModuleDestroy {
     this.subscriptions.push(
       await this.consumers.subscribeEach(
         {
-          groupId: `api-edits-${instance}`,
+          groupId: `live-edits-${instance}`,
           topics: [WIKI_CHANGES_TOPIC],
           fromBeginning: false,
         },
@@ -128,7 +128,7 @@ export class LiveFeedService implements OnModuleInit, OnModuleDestroy {
     this.subscriptions.push(
       await this.consumers.subscribeEach(
         {
-          groupId: `api-bursts-${instance}`,
+          groupId: `live-bursts-${instance}`,
           topics: [WIKI_BURSTS_TOPIC],
           fromBeginning: true,
         },
@@ -218,7 +218,7 @@ export class LiveFeedService implements OnModuleInit, OnModuleDestroy {
   private logStats() {
     const c = this.counters;
     console.log(
-      `Api stats: ${c.eventsSeen} events seen, ${c.editsAccepted} edits accepted, ${c.invalid} invalid, ${this.recentBursts.size} bursts kept, ${c.openStreams} open streams`,
+      `Live stats: ${c.eventsSeen} events seen, ${c.editsAccepted} edits accepted, ${c.invalid} invalid, ${this.recentBursts.size} bursts kept, ${c.openStreams} open streams`,
     );
   }
 }

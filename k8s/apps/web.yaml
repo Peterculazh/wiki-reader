@@ -1,12 +1,12 @@
 # The Next.js dashboard (apps/web), its own image: wiki-web:dev, built from
-# apps/web/Dockerfile. Server components fetch the first snapshot from the api
+# apps/web/Dockerfile. Server components fetch the first snapshot from the live
 # Service; the browser opens GET /live itself, see README, "Open the dashboard".
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
 spec:
-  # Stateless: everything comes from the api, so any number of replicas works
+  # Stateless: everything comes from the live app, so any number of replicas works
   replicas: 1
   selector:
     matchLabels:
@@ -38,7 +38,7 @@ spec:
             # here wins over Kubernetes' own.
             - name: HOSTNAME
               value: "0.0.0.0"
-          # API_URL: where server components reach the api
+          # LIVE_URL: where server components reach the live app
           envFrom:
             - configMapRef:
                 name: wiki-reader-config
@@ -49,7 +49,7 @@ spec:
             limits:
               memory: 512Mi
               cpu: 500m
-          # /healthz doesn't call the api: an api outage must not restart these
+          # /healthz doesn't call the live app: a live outage must not restart these
           # pods or take them out of the Service
           startupProbe:
             httpGet:

@@ -3,12 +3,12 @@
 #
 #   docker build -f apps/web/Dockerfile -t wiki-web:dev .
 #
-# The browser opens the api's GET /live at NEXT_PUBLIC_API_URL. Next inlines
+# The browser opens the live app's GET /live at NEXT_PUBLIC_LIVE_URL. Next inlines
 # that value into the JavaScript at build time, so it's a build argument, and a
-# ConfigMap can't change it later. The default matches the api port-forward in
+# ConfigMap can't change it later. The default matches the live port-forward in
 # the README; for any other address, rebuild:
 #
-#   docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_API_URL=http://... -t wiki-web:dev .
+#   docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_LIVE_URL=http://... -t wiki-web:dev .
 
 ARG NODE_IMAGE=node:24.22.1-bookworm-slim
 
@@ -23,8 +23,8 @@ COPY apps/web ./
 # the imports in libs/contracts/src/index.ts.
 COPY libs/contracts/src /repo/libs/contracts/src
 COPY libs/kafka/src/events.ts /repo/libs/kafka/src/events.ts
-ARG NEXT_PUBLIC_API_URL=http://localhost:3004
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+ARG NEXT_PUBLIC_LIVE_URL=http://localhost:3004
+ENV NEXT_PUBLIC_LIVE_URL=${NEXT_PUBLIC_LIVE_URL} \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
