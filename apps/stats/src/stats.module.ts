@@ -2,9 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PostgresModule } from '@app/postgres';
 import { KafkaModule } from '@app/kafka';
-import { StatsService } from './stats.service.js';
+import { StatsService } from './domain/stats.service.js';
 import { HealthModule } from '@app/health';
-import { ChangesRepository } from './changes.repository.js';
+import { ChangesRepository } from './domain/changes.repository.js';
 import { StatsController } from './api/stats.controller.js';
 
 @Module({
