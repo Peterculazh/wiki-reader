@@ -405,7 +405,10 @@ topics                                   # run it from wiki-dual-role-1 while 0 
 ```
 
 What happens:
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6d6718e6fdd70ec3cb993895945e7b97af0e8bc
 - `kubectl delete` stops the broker gracefully. It hands its leaderships over first (controlled shutdown), so the partitions it led get a new leader at once, e.g. `Partition: 1 Leader: 1 ... Isr: 1,2`.
 - The ISR shrinks to the two live brokers, which still meets `min.insync.replicas=2`, so writes go on.
 - Strimzi recreates the pod within seconds, **with the same name and on the same PVC**. Brokers aren't interchangeable the way a Deployment's pods are; each has an identity (node ID 0) and its own data. Strimzi manages them with its own StrimziPodSet, which works like a StatefulSet.
@@ -456,7 +459,10 @@ group --members                                        # one member has #PARTITI
 ```
 
 What happens:
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6d6718e6fdd70ec3cb993895945e7b97af0e8bc
 - Every scale step is a rebalance. Each archiver log shows `Revoke partitions` and then `Assign partitions`. With the client's default (eager) protocol, every member gives up all its partitions, even the ones it gets back.
 - Revoked partitions drop their in-memory chunk buffers, so the next owner re-reads from the last commit and writes those chunks under the same keys (no duplicates in S3).
 - The 4th pod logs `Assign partitions' and 0 partition(s)` and sits idle: a partition is never shared by two members of a group. Partitions are the unit of parallelism.
@@ -494,7 +500,10 @@ kubectl -n wiki get hpa keda-hpa-archiver -w
 ```
 
 Observed timeline:
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6d6718e6fdd70ec3cb993895945e7b97af0e8bc
 - **~15 s:** the HPA sees `3k/1k` and sets 3 replicas. The new pods start slowly under 25m of CPU.
 - **~50 s:** all three are Ready, one partition each, and the lag drains.
 - **~70 s:** back to 1. That's the HPA's scale-down stabilization window (30 s, set in the ScaledObject; the default is 300 s) after the lag fell below the threshold.
@@ -513,7 +522,10 @@ kubectl -n wiki rollout restart deploy/ingester # or: set image to a new tag, se
 ```
 
 What happens, with `strategy: Recreate`:
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6d6718e6fdd70ec3cb993895945e7b97af0e8bc
 - The old pod shuts down first: it shows `Completed` (exit code 0, graceful shutdown).
 - Only then is the new pod created. It goes `ContainerCreating` → `Running` → `1/1`, about 3 s with no reader at all, and never two at once.
 - The new pod logs `Resuming from ...` and asks the stream to replay from the position stored in `wiki.changes.latest`, so the gap isn't lost. The position is saved about once a minute, so up to a minute of events is published again; consumers see them twice (at least once).
@@ -527,7 +539,10 @@ What happens, with `strategy: Recreate`:
   docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka-1:29092 --describe --entity-type topics --entity-name wiki.changes.latest
   docker exec kafka-1 /opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka-1:29092 --alter --entity-type topics --entity-name wiki.changes.latest --add-config cleanup.policy=compact
   ```
+<<<<<<< HEAD
 
+=======
+>>>>>>> d6d6718e6fdd70ec3cb993895945e7b97af0e8bc
 - **The ingester drops events it fails to send.** It reads the stream with no backpressure, and on a failed `send()` it logs the event and moves on. It still saves later event IDs as its position, so a restart doesn't replay the gap. Instead it should stop reading on a failed send and reconnect from the last event it stored successfully (at least once; consumers can dedupe by event ID).
 
 - **`StorageModule` has no `forRootAsync`.** The archiver reads `S3_*` from `process.env` while modules are imported, before the env files are loaded, so values in `.env` are ignored.

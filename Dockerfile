@@ -20,9 +20,9 @@ COPY . .
 # Each app has its own outDir (dist/apps/<app>), so building one doesn't
 # delete another's output even with deleteOutDir
 RUN npx nest build ingester \
- && npx nest build archiver \
- && npx nest build bursts \
- && npx nest build live
+    && npx nest build archiver \
+    && npx nest build bursts \
+    && npx nest build live
 # Drops dev dependencies but keeps the native binary already in place, so it
 # isn't downloaded a second time
 RUN npm prune --omit=dev

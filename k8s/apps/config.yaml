@@ -15,11 +15,11 @@ data:
   S3_BUCKET: wiki-archive
   # App defaults, spelled out so they're easy to tweak. Set BURST_MIN_AUTHORS to
   # "2" to see bursts sooner; then restart: kubectl -n wiki rollout restart deploy/bursts
-  BURST_WINDOW_MS: "600000"
-  BURST_MIN_AUTHORS: "3"
-  BURST_COOLDOWN_MS: "3600000"
-  BURST_MAX_LAG_MS: "900000"
-  BURST_EVICT_INTERVAL_MS: "60000"
+  BURST_WINDOW_MS: '600000'
+  BURST_MIN_AUTHORS: '3'
+  BURST_COOLDOWN_MS: '3600000'
+  BURST_MAX_LAG_MS: '900000'
+  BURST_EVICT_INTERVAL_MS: '60000'
   # live: the origin the browser shows the dashboard at, allowed to open GET /live.
   # That's the web port-forward from the README.
   WEB_ORIGIN: http://localhost:3000
