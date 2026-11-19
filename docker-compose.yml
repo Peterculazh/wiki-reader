@@ -13,6 +13,14 @@ x-kafka-env: &kafka-env
   KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
   KAFKA_NUM_PARTITIONS: 3
   KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+  # Local dev: cap each partition at 1 GiB on top of the 7-day time limit.
+  # Without it the 3 replicas of a ~30 events/s stream grow by roughly 10 GB a
+  # day, and a full Docker disk turns the brokers' filesystem read-only.
+  # wiki.changes holds about a day of events this way; wiki.bursts is tiny and
+  # still keeps 7 days. Smaller segments (default 1 GiB) let retention delete
+  # in 100 MiB steps instead of keeping up to twice the cap.
+  KAFKA_LOG_RETENTION_BYTES: 1073741824
+  KAFKA_LOG_SEGMENT_BYTES: 104857600
 
 services:
   kafka-1:
@@ -68,6 +76,26 @@ services:
     volumes:
       - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
       - seaweedfs-data:/data
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    ports:
+      - ${POSTGRES_PORT:-5432}:5432
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wiki}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wiki}
+      POSTGRES_DB: ${POSTGRES_DB:-wiki}
+    healthcheck:
+      # $$ so the variables are expanded inside the container, not by Compose
+      test: ['CMD-SHELL', 'pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      # Postgres 18+ images keep data in /var/lib/postgresql/<major>/docker, so the
+      # volume goes on the parent dir (mounting .../data like older images fails)
+      - postgres-data:/var/lib/postgresql/data
 
 volumes:
   seaweedfs-data:
+  postgres-data:

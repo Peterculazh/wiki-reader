@@ -1,5 +1,7 @@
-# One image for all three apps. Each Kubernetes Deployment picks its app with
-# its command: node dist/apps/<ingester|archiver|bursts>/main.js
+# One image for all four Nest apps. Each Kubernetes Deployment picks its app with
+# its command: node dist/apps/<ingester|archiver|bursts|live>/main.js
+# The dashboard (apps/web) is a separate npm project with its own image, see
+# apps/web/Dockerfile; nothing of it ends up in this one.
 #
 #   docker build -t wiki-reader:dev .
 
@@ -18,8 +20,9 @@ COPY . .
 # Each app has its own outDir (dist/apps/<app>), so building one doesn't
 # delete another's output even with deleteOutDir
 RUN npx nest build ingester \
- && npx nest build archiver \
- && npx nest build bursts
+    && npx nest build archiver \
+    && npx nest build bursts \
+    && npx nest build live
 # Drops dev dependencies but keeps the native binary already in place, so it
 # isn't downloaded a second time
 RUN npm prune --omit=dev

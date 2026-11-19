@@ -89,6 +89,12 @@ spec:
       # Like compose: a consumer group starts at once instead of waiting 3 s
       # for more members, so rebalances in the experiments are quicker to watch
       group.initial.rebalance.delay.ms: 0
+      # Like compose: cap each partition at 1 GiB on top of the 7-day time limit.
+      # local-path doesn't enforce the PVC's 5Gi, so without this each broker's
+      # volume grew to ~17 GB in a week. Smaller segments (default 1 GiB) let
+      # retention delete in 100 MiB steps instead of keeping up to twice the cap.
+      log.retention.bytes: 1073741824
+      log.segment.bytes: 104857600
   entityOperator:
     # Syncs KafkaTopic resources to real topics. No userOperator: without
     # authentication there are no Kafka users to manage.

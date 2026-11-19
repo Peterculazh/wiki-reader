@@ -17,35 +17,21 @@
     "skipLibCheck": true,
     "strict": true,
     "strictPropertyInitialization": false,
-    "types": [
-      "vitest/globals",
-      "node"
-    ],
+    "types": ["vitest/globals", "node"],
     "paths": {
-      "@app/kafka": [
-        "./libs/kafka/src/index.ts"
-      ],
-      "@app/kafka/testing": [
-        "./libs/kafka/src/testing/index.ts"
-      ],
-      "@app/kafka/*": [
-        "./libs/kafka/src/*"
-      ],
-      "@app/storage": [
-        "./libs/storage/src/index.ts"
-      ],
-      "@app/storage/testing": [
-        "./libs/storage/src/testing/index.ts"
-      ],
-      "@app/storage/*": [
-        "./libs/storage/src/*"
-      ],
-      "@app/health": [
-        "./libs/health/src/index.ts"
-      ],
-      "@app/health/*": [
-        "./libs/health/src/*"
-      ]
+      "@app/contracts": ["./libs/contracts/src/index.ts"],
+      "@app/health": ["./libs/health/src/index.ts"],
+      "@app/health/*": ["./libs/health/src/*"],
+      "@app/kafka": ["./libs/kafka/src/index.ts"],
+      "@app/kafka/*": ["./libs/kafka/src/*"],
+      "@app/kafka/testing": ["./libs/kafka/src/testing/index.ts"],
+      "@app/postgres": ["./libs/postgres/src/index.ts"],
+      "@app/postgres/*": ["./libs/postgres/src/*"],
+      "@app/storage": ["./libs/storage/src/index.ts"],
+      "@app/storage/*": ["./libs/storage/src/*"],
+      "@app/storage/testing": ["./libs/storage/src/testing/index.ts"],
+      "@app/utils": ["./libs/utils/src/index.ts"],
+      "@app/utils/*": ["./libs/utils/src/*"]
     }
   },
   "files": [],
@@ -60,7 +46,13 @@
       "path": "./apps/bursts/tsconfig.app.json"
     },
     {
+      "path": "./apps/live/tsconfig.app.json"
+    },
+    {
       "path": "./tsconfig.spec.json"
+    },
+    {
+      "path": "./apps/stats/tsconfig.app.json"
     }
   ]
 }
