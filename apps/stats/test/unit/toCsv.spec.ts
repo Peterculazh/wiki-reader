@@ -1,5 +1,5 @@
-import { makeReportRow } from './fixtures.js';
-import { toCsv } from '../src/domain/toCsv.js';
+import { makeReportRow } from '../fixtures.js';
+import { toCsv } from '../../src/domain/toCsv.js';
 
 describe('toCSV: POSITIVE', () => {
   it('Should return CSV string', () => {

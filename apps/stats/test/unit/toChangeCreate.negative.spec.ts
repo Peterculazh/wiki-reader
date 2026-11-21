@@ -1,5 +1,5 @@
-import { makeEditEvent } from './fixtures.js';
-import { toChangeCreate } from '../src/domain/to-change.js';
+import { makeEditEvent } from '../fixtures.js';
+import { toChangeCreate } from '../../src/domain/to-change.js';
 
 describe('toChangeCreate: NEGATIVE', () => {
   it.each([

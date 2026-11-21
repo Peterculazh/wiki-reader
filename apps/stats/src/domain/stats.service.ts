@@ -35,7 +35,7 @@ export class StatsService implements OnModuleInit, OnModuleDestroy {
         topics: ['wiki.changes'],
         fromBeginning: false,
       },
-      async (message) => {
+      async (message, context) => {
         const change = toChangeCreate(message.value, (message) => {
           console.warn(message);
         });
@@ -46,6 +46,7 @@ export class StatsService implements OnModuleInit, OnModuleDestroy {
         }
 
         await this.changesRepo.insert(change);
+        await context.commit(message);
         this.storedCount++;
       },
     );

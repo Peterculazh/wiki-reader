@@ -1,9 +1,9 @@
 import {
   ChangesReportRow,
   ChangesRepository,
-} from '../src/domain/changes.repository.js';
-import { makeChange } from './fixtures.js';
-import { startTestDatabase } from './postgres.js';
+} from '../../src/domain/changes.repository.js';
+import { makeChange } from '../fixtures.js';
+import { startTestDatabase } from '../postgres.js';
 
 describe('ChangesRepository', () => {
   let db: Awaited<ReturnType<typeof startTestDatabase>>;
