@@ -20,6 +20,7 @@
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "test:int": "vitest run --config ./vitest.config.int.ts",
     "migrate:stats": "node-pg-migrate up -m apps/stats/migrations",
     "migrate:stats:down": "node-pg-migrate down -m apps/stats/migrations",
     "migrate:stats:create": "node-pg-migrate create -m apps/stats/migrations"
@@ -46,6 +47,7 @@
     "@nestjs/schematics": "^12.0.0",
     "@nestjs/testing": "^12.0.1",
     "@rspack/core": "^2.2.9",
+    "@testcontainers/postgresql": "^12.2.2",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",

@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import type { ChangesReportRow } from '../src/domain/changes.repository.js';
+import type { ChangeCreate } from '../src/domain/changes.repository.js';
 
 const baseEditEvent = {
   $schema: '/mediawiki/recentchange/1.0.0',
@@ -57,6 +59,24 @@ export function makeReportRow(
     bot_share: '0.333',
     bytes_delta: '120',
     final: true,
+    ...overrides,
+  };
+}
+
+export function makeChange(
+  overrides: Partial<ChangeCreate> = {},
+): ChangeCreate {
+  return {
+    eventId: randomUUID(),
+    eventTime: '2026-11-19T12:30:00.000Z',
+    wiki: 'enwiki',
+    title: 'Coffee',
+    type: 'edit',
+    author: 'Someone',
+    namespace: 0,
+    bot: false,
+    length_old: 1000,
+    length_new: 1100,
     ...overrides,
   };
 }
