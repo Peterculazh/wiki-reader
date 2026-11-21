@@ -1,8 +1,8 @@
 import type { Mock } from 'vitest';
 import { InMemoryKafka } from '@app/kafka/testing';
-import { StatsService } from '../src/domain/stats.service.js';
-import type { ChangesRepository } from '../src/domain/changes.repository.js';
-import { makeEditEvent } from './fixtures.js';
+import { StatsService } from '../../src/domain/stats.service.js';
+import type { ChangesRepository } from '../../src/domain/changes.repository.js';
+import { makeEditEvent } from '../fixtures.js';
 
 describe('StatsService: NEGATIVE', () => {
   let kafka: InMemoryKafka;

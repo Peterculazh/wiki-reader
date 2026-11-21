@@ -5,5 +5,5 @@
     "incremental": false,
     "rootDir": "../../.."
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts", "../src/configure-app.ts"]
 }

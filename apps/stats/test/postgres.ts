@@ -18,6 +18,7 @@ export async function startTestDatabase() {
   const pool = new Pool({ connectionString: databaseUrl });
 
   return {
+    url: databaseUrl,
     pool,
     async stop() {
       await pool.end();

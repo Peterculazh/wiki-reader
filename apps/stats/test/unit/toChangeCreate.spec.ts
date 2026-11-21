@@ -1,6 +1,6 @@
-import { makeEditEvent } from './fixtures.js';
-import { toChangeCreate } from '../src/domain/to-change.js';
-import { type ChangeCreate } from '../src/domain/changes.repository.js';
+import { makeEditEvent } from '../fixtures.js';
+import { toChangeCreate } from '../../src/domain/to-change.js';
+import { type ChangeCreate } from '../../src/domain/changes.repository.js';
 
 describe('toChangeCreate: POSITIVE', () => {
   it('Should return change ready for create', () => {
