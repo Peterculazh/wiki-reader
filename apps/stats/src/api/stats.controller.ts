@@ -2,6 +2,7 @@ import { Controller, Get, Query, StreamableFile } from '@nestjs/common';
 import { REPORT_RANGES, StatsService } from '../domain/stats.service.js';
 import { EditsReportQueryDTO } from './dto/editsReportQuery.js';
 import { toCsv } from '../domain/toCsv.js';
+import { toBuckets } from './toBucket.js';
 
 @Controller()
 export class StatsController {
@@ -17,5 +18,17 @@ export class StatsController {
       type: 'text/csv; charset=utf-8',
       disposition: `attachment; filename="edits-${query.range}-${date}.csv"`,
     });
+  }
+
+  @Get('reports/edits')
+  async getEdits(@Query() query: EditsReportQueryDTO) {
+    const { unit, count } = REPORT_RANGES[query.range];
+    const rows = await this.statsService.getReport(unit, count);
+
+    return {
+      range: query.range,
+      unit,
+      buckets: toBuckets(rows),
+    };
   }
 }
