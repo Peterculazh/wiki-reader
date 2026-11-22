@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "wiki-reader": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "apps/mcp/src/main.ts"
+      ],
+      "env": {}
+    }
+  }
+}

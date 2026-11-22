@@ -101,4 +101,16 @@ describe('Stats (e2e): POSITIVE', () => {
       .find((row) => row.startsWith(hour.toISOString()));
     expect(line?.split(',')[1]).toBe('1');
   });
+
+  it('Should return a 7 day report in JSON', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/reports/edits?range=7d')
+      .expect(200);
+
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.body).toBeTruthy();
+    expect(res.body.range).toBe('7d');
+    expect(res.body.unit).toBe('day');
+    expect(Array.isArray(res.body.buckets)).toBeTruthy();
+  });
 });
