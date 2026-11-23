@@ -55,4 +55,26 @@ describe('Stats (e2e): NEGATIVE', () => {
       .get('/reports/edits.csv?range=24h&foo=1')
       .expect(400);
   });
+
+  describe('GET /reports/page-edits', () => {
+    it.each([
+      ['no wiki', { title: 'Київ' }],
+      ['no title', { wiki: 'ukwiki' }],
+      ['an empty wiki', { wiki: '', title: 'Київ' }],
+      ['an empty title', { wiki: 'ukwiki', title: '' }],
+      ['hours below 1', { wiki: 'ukwiki', title: 'Київ', hours: 0 }],
+      ['hours above 24', { wiki: 'ukwiki', title: 'Київ', hours: 25 }],
+      [
+        'hours that is not a number',
+        { wiki: 'ukwiki', title: 'Київ', hours: 'abc' },
+      ],
+      ['limit below 1', { wiki: 'ukwiki', title: 'Київ', limit: 0 }],
+      ['limit above 50', { wiki: 'ukwiki', title: 'Київ', limit: 51 }],
+    ])('Should return a 400 for %s', async (_, query) => {
+      await request(app.getHttpServer())
+        .get('/reports/page-edits')
+        .query(query)
+        .expect(400);
+    });
+  });
 });

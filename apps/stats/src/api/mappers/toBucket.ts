@@ -1,4 +1,4 @@
-import { ChangesReportRow } from '../domain/changes.repository.js';
+import { ChangesReportRow } from '../../domain/changes.repository.js';
 
 export type EditsReportBucket = {
   periodStart: string;
