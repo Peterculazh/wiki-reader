@@ -2,7 +2,12 @@ import { Controller, Get, Query, StreamableFile } from '@nestjs/common';
 import { REPORT_RANGES, StatsService } from '../domain/stats.service.js';
 import { EditsReportQueryDTO } from './dto/editsReportQuery.js';
 import { toCsv } from '../domain/toCsv.js';
-import { toBuckets } from './toBucket.js';
+import { toBuckets } from './mappers/toBucket.js';
+import { TopPagesQueryDTO } from './dto/topPagesQuery.js';
+import { toTopPages } from './mappers/toTopPages.js';
+import { GetPageEditsQueryDTO } from './dto/getPageEdits.js';
+import { toGetPageEdits } from './mappers/toGetPageEdits.js';
+import { toDataStatus } from './mappers/toDataStatus.js';
 
 @Controller()
 export class StatsController {
@@ -30,5 +35,40 @@ export class StatsController {
       unit,
       buckets: toBuckets(rows),
     };
+  }
+
+  @Get('reports/top-pages')
+  async getTopPages(@Query() query: TopPagesQueryDTO) {
+    const rows = await this.statsService.getTopPages(
+      query.hours,
+      query.limit,
+      query.wiki,
+    );
+
+    return {
+      hours: query.hours,
+      wiki: query.wiki ?? null,
+      pages: toTopPages(rows),
+    };
+  }
+
+  @Get('reports/page-edits')
+  async getPageEdits(@Query() query: GetPageEditsQueryDTO) {
+    const { wiki, title, hours, limit } = query;
+    const { edits, summary } = await this.statsService.getPageEdits(
+      wiki,
+      title,
+      hours,
+      limit,
+    );
+
+    return toGetPageEdits(wiki, title, hours, summary, edits);
+  }
+
+  @Get('reports/status')
+  async getStatus() {
+    const result = await this.statsService.getDataStatus();
+
+    return toDataStatus(result);
   }
 }

@@ -5,6 +5,34 @@ import {
 import { makeChange } from '../fixtures.js';
 import { startTestDatabase } from '../postgres.js';
 
+function hourStartAgo(hours: number): Date {
+  const date = new Date();
+  date.setUTCMinutes(0, 0, 0);
+  date.setUTCHours(date.getUTCHours() - hours);
+  return date;
+}
+
+function dayStartAgo(days: number): Date {
+  const date = new Date();
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date;
+}
+
+function minutesAfter(date: Date, minutes: number): string {
+  return new Date(date.getTime() + minutes * 60_000).toISOString();
+}
+
+function rowAt(rows: ChangesReportRow[], periodStart: Date) {
+  return rows.find(
+    (row) => row.period_start.getTime() === periodStart.getTime(),
+  );
+}
+
+function minutesAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
 describe('ChangesRepository', () => {
   let db: Awaited<ReturnType<typeof startTestDatabase>>;
   let repo: ChangesRepository;
@@ -73,6 +101,39 @@ describe('ChangesRepository', () => {
 
     const { rows } = await db.pool.query('SELECT count(*) FROM changes');
     expect(rows[0].count).toBe('2');
+  });
+
+  describe('insertMany', () => {
+    it('Should store every change of a chunk', async () => {
+      await repo.insertMany([makeChange(), makeChange(), makeChange()]);
+
+      const { rows } = await db.pool.query('SELECT count(*) FROM changes');
+      expect(rows[0].count).toBe('3');
+    });
+
+    it('Should store a missing old length as NULL', async () => {
+      await repo.insertMany([
+        makeChange({ type: 'new', length_old: undefined, length_new: 500 }),
+      ]);
+
+      const { rows } = await db.pool.query(
+        'SELECT length_old, length_new FROM changes',
+      );
+      expect(rows).toEqual([{ length_old: null, length_new: 500 }]);
+    });
+
+    it('Should skip changes already stored or repeated in the chunk', async () => {
+      const stored = makeChange();
+      const repeated = makeChange();
+      await repo.insert(stored);
+
+      await repo.insertMany([stored, repeated, repeated]);
+
+      const { rows } = await db.pool.query('SELECT event_id FROM changes');
+      expect(rows.map((row) => row.event_id).sort()).toEqual(
+        [stored.eventId, repeated.eventId].sort(),
+      );
+    });
   });
 
   describe('getReportByBucket', () => {
@@ -147,27 +208,214 @@ describe('ChangesRepository', () => {
     });
   });
 
-  function hourStartAgo(hours: number): Date {
-    const date = new Date();
-    date.setUTCMinutes(0, 0, 0);
-    date.setUTCHours(date.getUTCHours() - hours);
-    return date;
-  }
+  describe('getTopPages', () => {
+    it('Should rank articles by edits within the window', async () => {
+      const recent = minutesAgo(10);
+      await repo.insert(
+        makeChange({ title: 'Alpha', author: 'a1', eventTime: recent }),
+      );
+      await repo.insert(
+        makeChange({ title: 'Alpha', author: 'a2', eventTime: recent }),
+      );
+      await repo.insert(
+        makeChange({ title: 'Alpha', author: 'a2', eventTime: recent }),
+      );
+      await repo.insert(
+        makeChange({ title: 'Beta', bot: true, eventTime: recent }),
+      );
+      await repo.insert(
+        makeChange({ title: 'Alpha', eventTime: minutesAgo(120) }),
+      );
+      for (let i = 0; i < 5; i++) {
+        await repo.insert(
+          makeChange({ title: 'Talk:Alpha', namespace: 1, eventTime: recent }),
+        );
+      }
 
-  function dayStartAgo(days: number): Date {
-    const date = new Date();
-    date.setUTCHours(0, 0, 0, 0);
-    date.setUTCDate(date.getUTCDate() - days);
-    return date;
-  }
+      const pages = await repo.getTopPages(1, 10);
 
-  function minutesAfter(date: Date, minutes: number): string {
-    return new Date(date.getTime() + minutes * 60_000).toISOString();
-  }
+      expect(pages).toEqual([
+        {
+          wiki: 'enwiki',
+          title: 'Alpha',
+          edits: '3',
+          bot_edits: '0',
+          authors: '2',
+        },
+        {
+          wiki: 'enwiki',
+          title: 'Beta',
+          edits: '1',
+          bot_edits: '1',
+          authors: '1',
+        },
+      ]);
+    });
 
-  function rowAt(rows: ChangesReportRow[], periodStart: Date) {
-    return rows.find(
-      (row) => row.period_start.getTime() === periodStart.getTime(),
-    );
-  }
+    it('Should keep only the requested wiki', async () => {
+      const recent = minutesAgo(10);
+      await repo.insert(
+        makeChange({ wiki: 'enwiki', title: 'Alpha', eventTime: recent }),
+      );
+      await repo.insert(
+        makeChange({ wiki: 'ukwiki', title: 'Альфа', eventTime: recent }),
+      );
+
+      const pages = await repo.getTopPages(1, 10, 'ukwiki');
+
+      expect(pages.map((page) => page.title)).toEqual(['Альфа']);
+    });
+
+    it('Should return no more pages than the limit', async () => {
+      const recent = minutesAgo(10);
+      await repo.insert(makeChange({ title: 'Alpha', eventTime: recent }));
+      await repo.insert(makeChange({ title: 'Alpha', eventTime: recent }));
+      await repo.insert(makeChange({ title: 'Beta', eventTime: recent }));
+
+      const pages = await repo.getTopPages(1, 1);
+
+      expect(pages.map((page) => page.title)).toEqual(['Alpha']);
+    });
+  });
+
+  describe('getPageEdits', () => {
+    const kyiv = { wiki: 'ukwiki', title: 'Київ' };
+
+    beforeEach(async () => {
+      await repo.insertMany([
+        makeChange({
+          ...kyiv,
+          author: 'Andrii',
+          eventTime: minutesAgo(10),
+          length_old: 1000,
+          length_new: 1100,
+        }),
+        makeChange({
+          ...kyiv,
+          author: 'Bohdan',
+          eventTime: minutesAgo(20),
+          length_old: 1100,
+          length_new: 800,
+        }),
+        makeChange({
+          ...kyiv,
+          author: 'Andrii',
+          eventTime: minutesAgo(30),
+          length_old: 800,
+          length_new: 1100,
+        }),
+        makeChange({
+          ...kyiv,
+          author: 'InternetArchiveBot',
+          bot: true,
+          eventTime: minutesAgo(40),
+          length_old: 1100,
+          length_new: 1150,
+        }),
+        makeChange({
+          ...kyiv,
+          type: 'new',
+          author: 'Chrystyna',
+          eventTime: minutesAgo(23 * 60),
+          length_old: undefined,
+          length_new: 800,
+        }),
+        makeChange({ ...kyiv, author: 'Old', eventTime: minutesAgo(30 * 60) }),
+        makeChange({ ...kyiv, type: 'categorize', eventTime: minutesAgo(5) }),
+        makeChange({ ...kyiv, wiki: 'enwiki', eventTime: minutesAgo(15) }),
+        makeChange({ ...kyiv, title: 'Львів', eventTime: minutesAgo(15) }),
+      ]);
+    });
+
+    it('Should summarize the edits of the page within the window', async () => {
+      const { summary } = await repo.getPageEdits('ukwiki', 'Київ', 24, 20);
+
+      expect(summary).toEqual({
+        edits: '5',
+        authors: '4',
+        bot_edits: '1',
+        bytes_delta: '950',
+      });
+    });
+
+    it('Should count only the requested hours', async () => {
+      const { summary } = await repo.getPageEdits('ukwiki', 'Київ', 1, 20);
+
+      expect(summary).toEqual({
+        edits: '4',
+        authors: '3',
+        bot_edits: '1',
+        bytes_delta: '150',
+      });
+    });
+
+    it('Should list the latest edits first, no more than the limit', async () => {
+      const { edits } = await repo.getPageEdits('ukwiki', 'Київ', 24, 3);
+
+      expect(edits).toEqual([
+        {
+          event_time: expect.any(Date),
+          author: 'Andrii',
+          bot: false,
+          type: 'edit',
+          bytes_delta: 100,
+        },
+        {
+          event_time: expect.any(Date),
+          author: 'Bohdan',
+          bot: false,
+          type: 'edit',
+          bytes_delta: -300,
+        },
+        {
+          event_time: expect.any(Date),
+          author: 'Andrii',
+          bot: false,
+          type: 'edit',
+          bytes_delta: 300,
+        },
+      ]);
+    });
+
+    it('Should count a new page by its whole size', async () => {
+      const { edits } = await repo.getPageEdits('ukwiki', 'Київ', 24, 20);
+
+      expect(edits.at(-1)).toMatchObject({
+        type: 'new',
+        author: 'Chrystyna',
+        bytes_delta: 800,
+      });
+    });
+
+    it('Should return zeros and no edits for a page nobody edited', async () => {
+      const result = await repo.getPageEdits('ukwiki', 'Ужгород', 24, 20);
+
+      expect(result).toEqual({
+        summary: { edits: '0', authors: '0', bot_edits: '0', bytes_delta: '0' },
+        edits: [],
+      });
+    });
+  });
+
+  describe('getDataStatus', () => {
+    it('Should return the newest event time and how long ago it was', async () => {
+      const newest = minutesAgo(10.5);
+      await repo.insertMany([
+        makeChange({ eventTime: minutesAgo(30) }),
+        makeChange({ eventTime: newest }),
+      ]);
+
+      expect(await repo.getDataStatus()).toEqual({
+        data_until: new Date(newest),
+        minutes_behind: 10,
+      });
+    });
+
+    it('Should return nulls when there is no data', async () => {
+      expect(await repo.getDataStatus()).toEqual({
+        data_until: null,
+        minutes_behind: null,
+      });
+    });
+  });
 });

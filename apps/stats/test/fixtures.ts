@@ -49,6 +49,11 @@ export function makeEditEvent(overrides: Record<string, unknown> = {}) {
   return { ...baseEditEvent, ...overrides };
 }
 
+/** JSON of a valid edit event whose meta.id (stored as event_id) is `id`. */
+export function editEventJson(id: string): string {
+  return JSON.stringify(makeEditEvent({ meta: { ...baseEditEvent.meta, id } }));
+}
+
 export function makeReportRow(
   overrides: Partial<ChangesReportRow> = {},
 ): ChangesReportRow {

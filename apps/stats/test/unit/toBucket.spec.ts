@@ -1,5 +1,5 @@
 import { makeReportRow } from '../fixtures.js';
-import { toBuckets } from '../../src/api/toBucket.js';
+import { toBuckets } from '../../src/api/mappers/toBucket.js';
 
 describe('toBucket: POSITIVE', () => {
   it('Should bucket mapped', () => {
