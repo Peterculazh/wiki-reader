@@ -8,6 +8,7 @@ export type DataStatus = {
 export function toDataStatus(row: DataStatusRow): DataStatus {
   return {
     dataUntil: row.data_until?.toISOString() ?? null,
-    minutesBehind: row.minutes_behind,
+    minutesBehind:
+      row.minutes_behind === null ? null : Math.max(0, row.minutes_behind),
   };
 }

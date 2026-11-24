@@ -1,6 +1,6 @@
 const STATS_URL = process.env.STATS_URL ?? 'http://localhost:3005';
 
-async function getJson(path: string) {
+export async function getJson(path: string) {
   const response = await fetch(`${STATS_URL}${path}`);
   if (!response.ok) {
     throw new Error(
