@@ -6,6 +6,8 @@ import { StatsService } from './domain/stats.service.js';
 import { HealthModule } from '@app/health';
 import { ChangesRepository } from './domain/changes.repository.js';
 import { StatsController } from './api/stats.controller.js';
+import { DigestRepository } from './domain/digest.repository.js';
+import { DigestService } from './domain/digest.service.js';
 
 @Module({
   imports: [
@@ -29,7 +31,7 @@ import { StatsController } from './api/stats.controller.js';
     }),
     HealthModule,
   ],
-  providers: [StatsService, ChangesRepository],
+  providers: [StatsService, ChangesRepository, DigestService, DigestRepository],
   controllers: [StatsController],
 })
 export class StatsModule {}

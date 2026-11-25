@@ -1,59 +1,6 @@
-import {
-  DigestRepository,
-  type DigestCreate,
-} from '../../src/domain/digest.repository.js';
+import { DigestRepository } from '../../src/domain/digest.repository.js';
+import { makeDigest } from '../fixtures.js';
 import { startTestDatabase } from '../postgres.js';
-
-export function makeDigest(
-  overrides: Partial<DigestCreate> = {},
-): DigestCreate {
-  return {
-    generatedAt: '2026-11-24T16:29:28.443Z',
-    hours: 12,
-    wikis: ['ukwiki', 'enwiki'],
-    dataUntil: '2026-11-24T16:28:56.675Z',
-    skippedPages: 81,
-    costUsd: 0.005253,
-    items: [
-      {
-        wiki: 'ukwiki',
-        title: 'Іриней (Булович)',
-        edits: 5,
-        authors: 5,
-        verdict: {
-          category: 'news_or_event',
-          confidence: 'low',
-          summary: '5 edits by 5 different authors within about three hours.',
-          evidence: [
-            'Summary: 5 edits, 5 distinct authors, 0 bot edits, bytesDelta +344 over 12 hours.',
-          ],
-        },
-      },
-      {
-        wiki: 'enwiki',
-        title: 'Teresa Buczacki',
-        edits: 45,
-        authors: 4,
-        verdict: {
-          category: 'single_author',
-          confidence: 'high',
-          summary: 'Physics Sci made 39 of the 45 edits in the last 12 hours.',
-          evidence: [
-            'Summary: 45 edits, 4 distinct authors, 0 bot edits, net bytesDelta +3940.',
-          ],
-        },
-      },
-      {
-        wiki: 'enwiki',
-        title: '2027 Punjab Legislative Assembly election',
-        edits: 50,
-        authors: 11,
-        error: 'stats responded with 500: Internal Server Error',
-      },
-    ],
-    ...overrides,
-  };
-}
 
 describe('DigestRepository', () => {
   let db: Awaited<ReturnType<typeof startTestDatabase>>;

@@ -1,4 +1,10 @@
-import { Controller, Get, Query, StreamableFile } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  NotFoundException,
+  Query,
+  StreamableFile,
+} from '@nestjs/common';
 import { REPORT_RANGES, StatsService } from '../domain/stats.service.js';
 import { EditsReportQueryDTO } from './dto/editsReportQuery.js';
 import { toCsv } from '../domain/toCsv.js';
@@ -8,10 +14,15 @@ import { toTopPages } from './mappers/toTopPages.js';
 import { GetPageEditsQueryDTO } from './dto/getPageEdits.js';
 import { toGetPageEdits } from './mappers/toGetPageEdits.js';
 import { toDataStatus } from './mappers/toDataStatus.js';
+import { toDigest } from './mappers/toDigest.js';
+import { DigestService } from '../domain/digest.service.js';
 
 @Controller()
 export class StatsController {
-  constructor(private readonly statsService: StatsService) {}
+  constructor(
+    private readonly statsService: StatsService,
+    private readonly digestService: DigestService,
+  ) {}
 
   @Get('reports/edits.csv')
   async getReport(@Query() query: EditsReportQueryDTO) {
@@ -70,5 +81,12 @@ export class StatsController {
     const result = await this.statsService.getDataStatus();
 
     return toDataStatus(result);
+  }
+
+  @Get('reports/digests/latest')
+  async getLatestDigest() {
+    const row = await this.digestService.getLatest();
+    if (!row) throw new NotFoundException('No digest yet');
+    return toDigest(row);
   }
 }

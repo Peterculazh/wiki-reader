@@ -8,11 +8,12 @@ import { InMemoryKafka, overrideKafka } from '@app/kafka/testing';
 import { StatsModule } from '../../src/stats.module.js';
 import { configureApp } from '../../src/configure-app.js';
 import { startTestDatabase } from '../postgres.js';
-import { makeChange, makeEditEvent } from '../fixtures.js';
+import { makeChange, makeEditEvent, makeDigest } from '../fixtures.js';
 import {
   type ChangeCreate,
   ChangesRepository,
 } from '../../src/domain/changes.repository.js';
+import { DigestRepository } from '../../src/domain/digest.repository.js';
 
 function minutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
@@ -252,6 +253,34 @@ describe('Stats (e2e): POSITIVE', () => {
         .expect(200);
 
       expect(res.body).toEqual({ dataUntil: null, minutesBehind: null });
+    });
+  });
+
+  describe('GET /reports/digests/latest', () => {
+    it('Should return 404 when there is no digest yet', async () => {
+      await request(app.getHttpServer())
+        .get('/reports/digests/latest')
+        .expect(404);
+    });
+
+    it('Should return the latest digest in camelCase', async () => {
+      const digest = makeDigest();
+      await new DigestRepository(db.pool).save(digest);
+
+      const res = await request(app.getHttpServer())
+        .get('/reports/digests/latest')
+        .expect(200);
+
+      expect(res.body).toEqual({
+        id: expect.any(String),
+        generatedAt: '2026-11-24T16:29:28.443Z',
+        hours: 12,
+        wikis: ['ukwiki', 'enwiki'],
+        dataUntil: '2026-11-24T16:28:56.675Z',
+        skippedPages: 81,
+        costUsd: 0.005253,
+        items: digest.items,
+      });
     });
   });
 });
